@@ -14,7 +14,7 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-const { useState, useCallback, useRef } = React;
+const { useState, useCallback, useRef, useEffect } = React;
 let _sel = null; // module-level selected konu key
 
 // ─── PDF Parser (client-side via pdfjs) ─────────────────────────────────────
@@ -1756,6 +1756,38 @@ function elleAramaAnahtari(s) {
 function elleEtiket(o, ad) { return Array.isArray(o && o.elle) && o.elle.includes(ad) ? " (Elle eklendi)" : ""; }
 // @@ELLE-EKLE-BITIR
 
+// @@PROGRAM-KAYIT-BASLA
+// 2010-kayit (kullanıcı 20.10): program (günler + oturumlar: saat, hoca, kapasite, öğrenciler, elle) localStorage'a otomatik yazılır.
+// Anahtar = hafta etiketi + öğrenci listesinin kısa hash'i → aynı karne/hafta tekrar yüklenince bulunur. Geri yükleme OTOMATİK DEĞİL:
+// "Kayıtlı program bulundu — Yükle / Yok say" şeridi çıkar (öğretmenin o an kurduğu programı habersiz ezmemek için daha güvenli).
+// Şerit açıkken ve program boşken otomatik kayıt YAZMAZ (kayıtlı program boş programla ezilmez). Motor/akış değişmez; tüm
+// localStorage/JSON işlemleri try/catch içinde — hata yalnız göstergede görünür, uygulama çökmez.
+const PROGRAM_KAYIT_ONEK = "ATAYURT_PROGRAM::";
+const PROGRAM_KAYIT_SURUM = 1;
+const PROGRAM_DOSYA_TUR = "atayurt-etut-program";
+function programKayitHash(adlar) {
+  const t = [...(adlar || [])].map(a => String(a)).sort().join("|");
+  let h = 5381; for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+function programKayitAnahtari(weekLabel, adlar) { return (adlar && adlar.length) ? `${PROGRAM_KAYIT_ONEK}${weekLabel || ""}::${programKayitHash(adlar)}` : ""; }
+// Dosya/kayıt doğrulama: hata metni ya da { programGunler, programOturumlar }.
+function programKayitDogrula(v) {
+  if (!v || typeof v !== "object") return "Dosya bir program kaydı değil.";
+  if (v.tur !== PROGRAM_DOSYA_TUR) return "Bu dosya Atayurt etüt programı dosyası değil.";
+  if (typeof v.surum !== "number" || v.surum > PROGRAM_KAYIT_SURUM) return "Dosya sürümü desteklenmiyor (daha yeni bir sürümle kaydedilmiş olabilir).";
+  if (!Array.isArray(v.programGunler) || !Array.isArray(v.programOturumlar)) return "Dosyada gün/oturum listesi yok.";
+  if (!v.programGunler.every(g => g && g.id !== undefined && typeof g.gunAdi === "string")) return "Gün kayıtları bozuk.";
+  const gunId = new Set(v.programGunler.map(g => g.id));
+  if (!v.programOturumlar.every(o => o && o.id !== undefined && gunId.has(o.gunId) && Array.isArray(o.ogrenciler) && Number.isFinite(Number(o.kapasite))))
+    return "Oturum kayıtları bozuk (gün, kapasite ya da öğrenci listesi eksik).";
+  return { programGunler: v.programGunler, programOturumlar: v.programOturumlar.map(o => ({ ...o, kapasite: Number(o.kapasite), ogrenciler: o.ogrenciler.map(String), elle: Array.isArray(o.elle) ? o.elle.map(String) : [] })) };
+}
+function programKayitPaket(weekLabel, anahtar, programGunler, programOturumlar) {
+  return { tur: PROGRAM_DOSYA_TUR, surum: PROGRAM_KAYIT_SURUM, anahtar, weekLabel, kaydedildi: new Date().toISOString(), programGunler, programOturumlar };
+}
+// @@PROGRAM-KAYIT-BITIR
+
 // ─── Program çıktıları (v15 exportProgramExcel / printProgramPDF + saat sütunu) ──
 function programSirali(programGunler, programOturumlar) {
   return (programGunler || []).map(gun => ({
@@ -1974,6 +2006,55 @@ function EtutSistemi() {
   const studs = weeks[activeWeek]?.students || [];
   const students = studs;
   const weekLabel = weeks[activeWeek]?.label || "";
+  // @@PROGRAM-KAYIT: otomatik kayıt + geri yükleme şeridi
+  const programAnahtar = programKayitAnahtari(weekLabel, studs.map(s => s.ogrenci));
+  const [kayitDurum, setKayitDurum] = useState("");
+  const [kayitBulundu, setKayitBulundu] = useState(null); // { anahtar, veri, kaydedildi }
+  const [kayitUyari, setKayitUyari] = useState("");
+  const kayitDosyaRef = useRef(null);
+  const kayitBakilanRef = useRef("");
+  useEffect(() => {
+    if (!programAnahtar || kayitBakilanRef.current === programAnahtar) return;
+    kayitBakilanRef.current = programAnahtar;
+    setKayitUyari("");
+    try {
+      const ham = window.localStorage.getItem(programAnahtar);
+      if (!ham) { setKayitBulundu(null); return; }
+      const d = programKayitDogrula(JSON.parse(ham));
+      if (typeof d === "string") { setKayitBulundu(null); setKayitDurum("⚠️ Kayıtlı program okunamadı: " + d); return; }
+      if (!d.programOturumlar.length && !d.programGunler.length) { setKayitBulundu(null); return; }
+      setKayitBulundu({ anahtar: programAnahtar, veri: d, kaydedildi: (JSON.parse(ham) || {}).kaydedildi });
+    } catch (e) { setKayitBulundu(null); setKayitDurum("⚠️ Kayıtlı program okunamadı"); }
+  }, [programAnahtar]);
+  useEffect(() => {
+    if (!programAnahtar) return;
+    if (kayitBulundu && kayitBulundu.anahtar === programAnahtar) return; // şerit açıkken yazma
+    if (!programGunler.length && !programOturumlar.length) return;      // boş program kayıtlıyı ezmez (sıfırla ayrı)
+    const t = setTimeout(() => {
+      try {
+        window.localStorage.setItem(programAnahtar, JSON.stringify(programKayitPaket(weekLabel, programAnahtar, programGunler, programOturumlar)));
+        setKayitDurum("💾 Kaydedildi " + new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }));
+      } catch (e) { setKayitDurum("⚠️ Kaydedilemedi (tarayıcı depolama dolu/kapalı) — dosyaya kaydedin"); }
+    }, 800);
+    return () => clearTimeout(t);
+  }, [programAnahtar, programGunler, programOturumlar, kayitBulundu]);
+  // Geri yükleme: veri olduğu gibi konur (motor yeniden çalıştırılmaz → elle eklenenler ve el düzenlemeleri korunur).
+  const programKayitYukle = (d, kaynakMetni) => {
+    setProgramGunler(d.programGunler);
+    setProgramOturumlar(d.programOturumlar);
+    setKayitBulundu(null);
+    setKayitDurum(kaynakMetni);
+  };
+  const programKayitUyarisi = (d, gruplar) => {
+    const keys = new Set((gruplar || []).map(g => g.key));
+    const adlar = new Set(studs.map(s => s.ogrenci));
+    const grupYok = d.programOturumlar.filter(o => o.grupKey && !keys.has(o.grupKey));
+    const ogrYok = [...new Set(d.programOturumlar.flatMap(o => o.ogrenciler.filter(a => !adlar.has(a) && !(o.elle || []).includes(a))))];
+    const m = [];
+    if (grupYok.length) m.push(`${grupYok.length} oturumun grubu bu karnede yok (${grupYok.map(o => `${o.ders} - ${o.konu}`).join(", ")}) — oturumlar korundu, otomatik atama bu oturumlara öğrenci eklemez`);
+    if (ogrYok.length) m.push(`${ogrYok.length} öğrenci karnede yok ama programda korundu: ${ogrYok.join(", ")}`);
+    return m.join(" · ");
+  };
 
   // @@HAFTA-ETIKET — Yükle sekmesindeki hafta seçimi (1809-hafta-ux).
   // `weekInput` tek kaynaktır: Yükle'deki çipler/düğme de, onay modalındaki kutu da onu yazar.
@@ -3721,6 +3802,52 @@ function EtutSistemi() {
           const btn = (renk) => ({padding:'6px 14px', borderRadius:8, background:`rgba(${renk},0.12)`, border:`1px solid rgba(${renk},0.3)`, fontWeight:700, fontSize:12});
           return (
             <div style={{padding:'20px 0'}}>
+              {/* @@PROGRAM-KAYIT: kayıt şeridi + dosya işlemleri */}
+              {kayitBulundu && kayitBulundu.anahtar === programAnahtar && (
+                <div data-kayit-bulundu style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', padding:'8px 12px', marginBottom:10, borderRadius:8, background:'rgba(245,158,11,0.12)', border:'1px solid rgba(245,158,11,0.45)'}}>
+                  <span style={{fontSize:12, fontWeight:800, color:'#fbbf24'}}>💾 Bu karne/hafta için kayıtlı program bulundu</span>
+                  <span style={{fontSize:11, color:'#94a3b8'}}>({kayitBulundu.veri.programGunler.length} gün, {kayitBulundu.veri.programOturumlar.length} oturum{kayitBulundu.kaydedildi ? ', ' + new Date(kayitBulundu.kaydedildi).toLocaleString('tr-TR') : ''})</span>
+                  <button className="btn" data-kayit-yukle onClick={()=>{ const d = kayitBulundu.veri; setKayitUyari(programKayitUyarisi(d, groups)); programKayitYukle(d, '📥 Kayıtlı program yüklendi'); }}
+                    style={{padding:'4px 12px', borderRadius:6, background:'#f59e0b', border:'none', color:'#1e1b4b', fontSize:11, fontWeight:800}}>Yükle</button>
+                  <button className="btn" data-kayit-yoksay onClick={()=>setKayitBulundu(null)} title="Kayıt silinmez; programda değişiklik yaparsanız onun yerine yeni program kaydedilir"
+                    style={{padding:'4px 12px', borderRadius:6, background:'transparent', border:'1px solid rgba(255,255,255,0.2)', color:'#94a3b8', fontSize:11}}>Yok say</button>
+                </div>
+              )}
+              {kayitUyari && <div data-kayit-uyari style={{fontSize:11, color:'#fca5a5', padding:'6px 10px', marginBottom:8, borderRadius:7, background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.3)'}}>⚠️ {kayitUyari} <span style={{cursor:'pointer', marginLeft:6, color:'#94a3b8'}} onClick={()=>setKayitUyari('')}>✕</span></div>}
+              <div data-kayit-arac style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', marginBottom:10}}>
+                <button className="btn" data-kayit-dosya-kaydet onClick={()=>{
+                    try {
+                      const blob = new Blob([JSON.stringify(programKayitPaket(weekLabel, programAnahtar, programGunler, programOturumlar), null, 1)], {type:'application/json'});
+                      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `etut-programi-${(weekLabel||'hafta').replace(/[^\wçğıöşüÇĞİÖŞÜ-]+/g,'_')}.json`;
+                      document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+                      setKayitDurum('💾 Dosyaya kaydedildi');
+                    } catch (e) { alert('Dosya oluşturulamadı: ' + (e && e.message)); }
+                  }} style={{...btn('16,185,129'), color:'#34d399'}}>💾 Programı dosyaya kaydet</button>
+                <button className="btn" data-kayit-dosya-ac onClick={()=>kayitDosyaRef.current && kayitDosyaRef.current.click()} style={{...btn('99,102,241'), color:'#818cf8'}}>📂 Dosyadan aç</button>
+                <input ref={kayitDosyaRef} data-kayit-dosya-input type="file" accept=".json,application/json" style={{display:'none'}} onChange={e=>{
+                    const f = e.target.files && e.target.files[0]; e.target.value = '';
+                    if (!f) return;
+                    const r = new FileReader();
+                    r.onload = () => {
+                      let d;
+                      try { d = programKayitDogrula(JSON.parse(String(r.result))); } catch (err) { d = 'Dosya okunamadı: geçerli bir JSON değil.'; }
+                      if (typeof d === 'string') { setKayitDurum('⚠️ Açılamadı'); alert('Program dosyası açılamadı: ' + d + '\nMevcut program değiştirilmedi.'); return; }
+                      if ((programOturumlar.length || programGunler.length) && !window.confirm('Mevcut programın yerine dosyadaki program konacak. Devam edilsin mi?')) return;
+                      setKayitUyari(programKayitUyarisi(d, groups));
+                      programKayitYukle(d, '📂 Dosyadan açıldı');
+                    };
+                    r.onerror = () => alert('Dosya okunamadı. Mevcut program değiştirilmedi.');
+                    r.readAsText(f);
+                  }}/>
+                <button className="btn" data-kayit-sifirla onClick={()=>{
+                    if (!window.confirm('Bu karne/hafta için kayıtlı program silinecek ve ekrandaki program sıfırlanacak. Emin misiniz?')) return;
+                    try { if (programAnahtar) window.localStorage.removeItem(programAnahtar); } catch (e) {}
+                    setKayitBulundu(null); setKayitUyari('');
+                    setProgramOturumlar([]); setProgramGunler([]);
+                    setKayitDurum('🗑️ Kayıtlı program silindi');
+                  }} style={{...btn('239,68,68'), color:'#f87171'}}>🗑️ Kayıtlı programı sil / sıfırla</button>
+                <span data-kayit-durum style={{fontSize:11, color:/⚠️/.test(kayitDurum)?'#fca5a5':'#64748b'}}>{kayitDurum || (programAnahtar ? 'Program bu tarayıcıda otomatik kaydedilir' : 'Karne yüklenince program otomatik kaydedilir')}</span>
+              </div>
               {/* Başlık + Gün ekle + çıktılar */}
               <div style={{display:'flex', alignItems:'center', gap:12, marginBottom:10, flexWrap:'wrap'}}>
                 <div style={{fontFamily:"'Outfit',sans-serif", fontSize:18, fontWeight:800, color:'#f1f5f9'}}>📅 Haftalık Etüt Programı</div>
