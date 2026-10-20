@@ -1015,14 +1015,18 @@ function exportWord(students, groups, threshold, weekLabel) {
 }
 
 // ─── WhatsApp message generator ───────────────────────────────────────────────
-function generateWA(student, groups, threshold) {
+function generateWA(student, groups, threshold, programOturumlar) {
   const myG = groups.filter(g => g.ogrenciler.some(o => o.ad === student.ogrenci));
+  // @@ELLE-EKLE: programda elle eklendiği oturumlar da mesaja girer
+  const elleSatir = (programOturumlar || []).filter(o => (o.elle || []).includes(student.ogrenci)).map(o => `• ${o.ders}${o.konu ? " - " + o.konu : ""} (Elle eklendi)`);
+  if (myG.length === 0 && elleSatir.length)
+    return `Sayın veli,\n\n${student.ogrenci} öğrencinizin bu hafta etüt programı:\n\n${elleSatir.join("\n")}\n\nLütfen belirtilen etütlere katılımını sağlayınız.\nSaygılarımızla 🏫`;
   if (myG.length === 0)
     return `Sayın veli, ${student.ogrenci} öğrenciniz bu hafta ${GENEL_ARALIK.min > 0 ? `hiçbir konuda ${genelAralikMetni()} aralığında değildir; bu hafta etüt gerekmemektedir.` : `tüm konularda %${threshold} ve üzerindedir. Tebrikler! 🎉`}`;
   const konuListesi = myG.map(g => {
     const me = g.ogrenciler.find(o => o.ad === student.ogrenci);
     return `• ${g.ders} - ${g.konu} (%${Math.round(me?.yuzde??0)})`;
-  }).join("\n");
+  }).concat(elleSatir).join("\n");
   return `Sayın veli,\n\n${student.ogrenci} öğrencinizin bu hafta etüt programı:\n\n${konuListesi}\n\nLütfen belirtilen etütlere katılımını sağlayınız.\nSaygılarımızla 🏫`;
 }
 
@@ -1729,6 +1733,29 @@ function aralikHazirlikGrubu(grp) { return grp && grp.aralik ? { ...grp, key: gr
 function aralikHazirlikEsik(grp, esik) { return grp && grp.aralik ? grp.aralik.max + 1e-9 : esik; }
 // @@ARALIK-MODU-BITIR
 
+// @@ELLE-EKLE-BASLA
+// 2010-elle (kullanıcı 20.10): öğretmen bir oturuma ELLE (ad yazarak) öğrenci ekler; karnede olmayan serbest isim de olur.
+// oturum.elle = [ad] (oturum nesnesinde; program state'i neredeyse oraya kalıcıdır). Elle eklenenler KİLİTLİ: motor
+// (programDengeliAta) DEĞİŞMEDİ — sarmalayıcı motoru elle adlar çıkarılmış ve kapasitesi elle sayısı kadar düşürülmüş
+// oturumlarla çağırır, sonra elle adları geri ekler. Kapasite/müsaitlik/çakışma yalnız UYARI (öğretmen karar verir).
+function programElleKoruyarak(groups, programGunler, programOturumlar, musaitlik) {
+  const liste = programOturumlar || [];
+  const elleOf = (o) => Array.isArray(o.elle) ? o.elle : [];
+  if (!liste.some(o => elleOf(o).length)) return programDengeliAta(groups, programGunler, liste, musaitlik);
+  const giris = liste.map(o => { const e = elleOf(o); return e.length ? { ...o, kapasite: Math.max(0, o.kapasite - e.length), ogrenciler: (o.ogrenciler || []).filter(a => !e.includes(a)) } : o; });
+  const kaynak = {}; liste.forEach(o => { kaynak[o.id] = o; });
+  return programDengeliAta(groups, programGunler, giris, musaitlik).map(o => {
+    const src = kaynak[o.id]; const e = src ? elleOf(src) : [];
+    if (!e.length) return o;
+    return { ...o, kapasite: src.kapasite, elle: e, ogrenciler: [...(o.ogrenciler || []).filter(a => !e.includes(a)), ...e] };
+  });
+}
+function elleAramaAnahtari(s) {
+  return String(s || "").toLocaleLowerCase("tr-TR").replace(/[çğıöşüâîû]/g, c => ({ "ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u", "â": "a", "î": "i", "û": "u" }[c])).replace(/\s+/g, " ").trim();
+}
+function elleEtiket(o, ad) { return Array.isArray(o && o.elle) && o.elle.includes(ad) ? " (Elle eklendi)" : ""; }
+// @@ELLE-EKLE-BITIR
+
 // ─── Program çıktıları (v15 exportProgramExcel / printProgramPDF + saat sütunu) ──
 function programSirali(programGunler, programOturumlar) {
   return (programGunler || []).map(gun => ({
@@ -1750,10 +1777,10 @@ function exportProgramExcel(programGunler, programOturumlar, weekLabel) {
     const rows = [[gun.gunAdi + (gun.tarih ? " " + gun.tarih : "")], ["Saat", "Ders/Grup", "Hoca", "Kapasite", "Öğrenci Sayısı", "Öğrenciler"]];
     oturumlar.forEach(o => {
       const label = o.ders + (o.konu ? " - " + o.konu : "");
-      rows.push([o.saat || "", label, o.hoca || "-", o.kapasite, o.ogrenciler.length, o.ogrenciler.join(", ")]);
-      o.ogrenciler.forEach((ad, j) => rows.push(["", "", "", "", (j + 1) + ". " + ad, ""]));
+      rows.push([o.saat || "", label, o.hoca || "-", o.kapasite, o.ogrenciler.length, o.ogrenciler.map(ad => ad + elleEtiket(o, ad)).join(", ")]);
+      o.ogrenciler.forEach((ad, j) => rows.push(["", "", "", "", (j + 1) + ". " + ad + elleEtiket(o, ad), ""]));
       rows.push([]);
-      ozet.push([gun.gunAdi, gun.tarih || "", o.saat || "", label, o.hoca || "-", o.kapasite, o.ogrenciler.length, o.ogrenciler.join(", ")]);
+      ozet.push([gun.gunAdi, gun.tarih || "", o.saat || "", label, o.hoca || "-", o.kapasite, o.ogrenciler.length, o.ogrenciler.map(ad => ad + elleEtiket(o, ad)).join(", ")]);
     });
     const ws = XLSX.utils.aoa_to_sheet(rows);
     ws["!cols"] = [{ wch: 8 }, { wch: 30 }, { wch: 18 }, { wch: 10 }, { wch: 22 }, { wch: 60 }];
@@ -1787,7 +1814,7 @@ function printProgramPDF(programGunler, programOturumlar, weekLabel) {
     html += `<table><tr><th style="width:7%">Saat</th><th style="width:27%">Ders / Grup</th><th style="width:15%">Hoca</th><th style="width:6%">Kap.</th><th>Öğrenciler</th><th style="width:70px">İmza</th></tr>`;
     oturumlar.forEach(o => {
       const label = o.ders + (o.konu ? " - " + o.konu : "");
-      const ogr = o.ogrenciler.map((ad, i) => (i + 1) + ". " + esc(ad)).join("<br>");
+      const ogr = o.ogrenciler.map((ad, i) => (i + 1) + ". " + esc(ad + elleEtiket(o, ad))).join("<br>");
       html += `<tr><td>${esc(o.saat)}</td><td><b>${esc(label)}</b></td><td>${esc(o.hoca || "-")}</td><td style="text-align:center">${o.kapasite}</td><td class="ogr">${ogr || "-"}</td><td></td></tr>`;
     });
     html += `</table>`;
@@ -1853,6 +1880,7 @@ function EtutSistemi() {
   // Haftalık Etüt Programı (v15): gün kartları + oturumlar — şekil @@PROGRAM-KURALI bloğunda.
   const [programGunler, setProgramGunler] = useState([]);
   const [programOturumlar, setProgramOturumlar] = useState([]);
+  const [elleArama, setElleArama] = useState({}); // @@ELLE-EKLE: oturum id → yazılan ad
   const [programSiraGrup, setProgramSiraGrup] = useState(''); // alttaki sıralama listesinde seçili grup ('' = programdaki ilk grup)
   // Hazırlık kartı açık oturumlar (1609-hazirlik): yalnız görünüm; oturum kaydına yazılmaz → atama/dengeleme tetiklenmez.
   const [programHazirlikAcik, setProgramHazirlikAcik] = useState({});
@@ -2092,7 +2120,7 @@ function EtutSistemi() {
     if (programOturumlar.length > 0) {
       const yeniGruplar = buildGroupsNow(studs, threshold, konuGruplari, temiz);
       const gecerli = new Set(yeniGruplar.map(g => g.key));
-      setProgramOturumlar(programDengeliAta(yeniGruplar, programGunler,
+      setProgramOturumlar(programElleKoruyarak(yeniGruplar, programGunler,
         programOturumlar.map(o => gecerli.has(o.grupKey) ? o : { ...o, ogrenciler: [] }), ogrMusait));
     }
   };
@@ -2378,7 +2406,7 @@ function EtutSistemi() {
     const next = {...ogrMusait};
     if (yeni.length) next[k] = GUNLER.filter(g => yeni.includes(g)); else delete next[k];
     setOgrMusait(next);
-    if (programOturumlar.length > 0) setProgramOturumlar(programDengeliAta(groups, programGunler, programOturumlar, next));
+    if (programOturumlar.length > 0) setProgramOturumlar(programElleKoruyarak(groups, programGunler, programOturumlar, next));
   };
   // Öğrenci kartı / tablosu: 7 gün çipi — dolu = müsait (varsayılan hepsi), tıkla kapat/aç.
   const musaitCipleri = (ad) => {
@@ -2564,11 +2592,11 @@ function EtutSistemi() {
           <div className="fi" style={{background:"#1e293b",borderRadius:18,padding:28,maxWidth:500,width:"100%",border:"1px solid rgba(255,255,255,0.1)"}}>
             <div style={{fontFamily:"'Outfit',sans-serif",fontWeight:800,fontSize:17,color:"#f1f5f9",marginBottom:4}}>📱 WhatsApp / SMS Taslağı</div>
             <div style={{fontSize:12,color:"#64748b",marginBottom:14}}>{waModal.ogrenci} için veli mesajı</div>
-            <textarea readOnly value={generateWA(waModal, groups, threshold)}
+            <textarea readOnly value={generateWA(waModal, groups, threshold, programOturumlar)}
               style={{width:"100%",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.12)",borderRadius:10,padding:"12px 14px",color:"#f1f5f9",fontSize:13,lineHeight:1.6,resize:"none",height:180}} />
             <div style={{display:"flex",gap:10,marginTop:14}}>
               <button className="btn" onClick={() => {
-                navigator.clipboard.writeText(generateWA(waModal, groups, threshold));
+                navigator.clipboard.writeText(generateWA(waModal, groups, threshold, programOturumlar));
                 alert("Mesaj kopyalandı!");
               }} style={{flex:1,padding:"9px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#25D366,#128C7E)",color:"#fff",fontWeight:700,fontSize:13}}>📋 Kopyala</button>
               <button className="btn" onClick={()=>setWaModal(null)} style={{flex:1,padding:"9px",borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"#94a3b8",fontWeight:600,fontSize:13}}>Kapat</button>
@@ -3621,11 +3649,11 @@ function EtutSistemi() {
             if (n>0 && !window.confirm(`Bu gündeki ${n} etüt de silinecek. Devam edilsin mi?`)) return;
             const gunler = programGunler.filter(g=>g.id!==gId);
             setProgramGunler(gunler);
-            setProgramOturumlar(programDengeliAta(groups, gunler, programOturumlar.filter(o=>o.gunId!==gId), ogrMusait));
+            setProgramOturumlar(programElleKoruyarak(groups, gunler, programOturumlar.filter(o=>o.gunId!==gId), ogrMusait));
           };
           // Oturum eklenince/silinince, grubu ya da kapasitesi değişince bütün hafta birlikte yeniden çözülür (1509-dengeli-ata).
           // Saat / gün adı değişince liste korunur (ihlal paneli uyarır); "⚖️ Haftayı Dengeli Ata" ile yeniden çözülür.
-          const dengeliAta = (liste) => setProgramOturumlar(programDengeliAta(groups, programGunler, liste, ogrMusait));
+          const dengeliAta = (liste) => setProgramOturumlar(programElleKoruyarak(groups, programGunler, liste, ogrMusait));
           const updateGun = (gId, field, val) => setProgramGunler(prev => prev.map(g => g.id===gId ? {...g, [field]:val} : g));
           const gunAdiOf = (oId) => { const o = programOturumlar.find(x=>x.id===oId); return programGunler.find(g=>g.id===o?.gunId)?.gunAdi; };
           const addOturum = (gunId) => {
@@ -3642,7 +3670,7 @@ function EtutSistemi() {
             const i = liste.findIndex(o=>o.id===oId);
             if (field==='grupKey') {
               const g = groups.find(x=>x.key===val);
-              liste[i] = {...liste[i], ders:g?.ders||'', konu:g?.konu||'', ogrenciler:[]};
+              liste[i] = {...liste[i], ders:g?.ders||'', konu:g?.konu||'', ogrenciler:[], elle:[]};
               dengeliAta(liste); return;
             } else if (field==='kapasite') {
               dengeliAta(liste); return;
@@ -3654,13 +3682,31 @@ function EtutSistemi() {
             const o = programOturumlar.find(x=>x.id===oId);
             if (!o) return;
             if (o.ogrenciler.includes(ad)) {
-              setProgramOturumlar(programOturumlar.map(x => x.id===oId ? {...x, ogrenciler:x.ogrenciler.filter(a=>a!==ad)} : x));
+              setProgramOturumlar(programOturumlar.map(x => x.id===oId ? {...x, ogrenciler:x.ogrenciler.filter(a=>a!==ad), elle:(x.elle||[]).filter(a=>a!==ad)} : x));
               return;
             }
             if (o.ogrenciler.length>=o.kapasite) return;
             if (!programMusaitMi(ogrMusait, ad, gunAdiOf(oId))) return; // gelemediği güne elle de yazılmaz
             if (programCakisiyor(programGunler, programOturumlar, oId, ad)) return;
             setProgramOturumlar(programOturumlar.map(x => x.id===oId ? {...x, ogrenciler:[...x.ogrenciler, ad]} : x));
+          };
+          // @@ELLE-EKLE: kural yalnız uyarı; ekleme engellenmez
+          const elleEkle = (oId, adHam) => {
+            const ad = String(adHam||'').trim().replace(/\s+/g,' ');
+            if (!ad) return;
+            const o = programOturumlar.find(x=>x.id===oId);
+            if (!o || o.ogrenciler.includes(ad)) { setElleArama(p=>({...p, [oId]:''})); return; }
+            setProgramOturumlar(programOturumlar.map(x => x.id===oId ? {...x, ogrenciler:[...x.ogrenciler, ad], elle:[...(x.elle||[]).filter(a=>a!==ad), ad]} : x));
+            setElleArama(p=>({...p, [oId]:''}));
+          };
+          const elleUyarilar = (oId, ad) => {
+            const o = programOturumlar.find(x=>x.id===oId); if (!o || !ad) return [];
+            const u = [];
+            if (o.ogrenciler.includes(ad)) u.push('Zaten bu oturumda');
+            if (o.ogrenciler.length >= o.kapasite) u.push(`Kapasite dolu (${o.ogrenciler.length}/${o.kapasite}) — yine de eklenir`);
+            if (!programMusaitMi(ogrMusait, ad, gunAdiOf(oId))) u.push(`${gunAdiOf(oId)} müsait değil`);
+            if (programCakisiyor(programGunler, programOturumlar, oId, ad)) u.push('Aynı gün/saatte başka etüdü var');
+            return u;
           };
           const sekil = programTakvimSekli(programGunler, programOturumlar);
           const ihlaller = takvimIhlalleri(sekil.groups, sekil.takvim);
@@ -3923,14 +3969,16 @@ function EtutSistemi() {
                                     const o = yuzdeOf(ad);
                                     const musaitDegil = !programMusaitMi(ogrMusait, ad, gun.gunAdi);
                                     const ihlal = musaitDegil || programCakisiyor(programGunler, programOturumlar, oturum.id, ad);
-                                    const gerekce = grupGerekce(grp, ad, threshold);
-                                    const kaynak = programKaynak(grp, ad);
+                                    const elleMi = (oturum.elle||[]).includes(ad);
+                                    const gerekce = elleMi ? 'Elle eklendi' : grupGerekce(grp, ad, threshold);
+                                    const kaynak = elleMi ? 'elle' : programKaynak(grp, ad);
                                     const sira = kaynak==='sirala';
                                     return (
-                                      <span key={ad} data-program-ogrenci={ad} data-program-kaynak={kaynak||''} data-program-gerekce={gerekce} data-program-musait-degil={musaitDegil?'1':undefined} onClick={()=>toggleOgrenci(oturum.id,ad)}
+                                      <span key={ad} data-program-ogrenci={ad} data-program-kaynak={kaynak||''} data-program-gerekce={gerekce} data-program-musait-degil={musaitDegil?'1':undefined} data-program-elle={elleMi?'1':undefined} onClick={()=>toggleOgrenci(oturum.id,ad)}
                                         title={(musaitDegil?`🚫 ${gun.gunAdi} müsait değil — `:ihlal?'⚠️ Kural: bu gün/saatte başka etüdü var — ':'')+(gerekce?gerekce+' — ':'')+'Çıkarmak için tıkla'}
                                         style={{padding:'2px 8px', borderRadius:12, fontSize:9, fontWeight:700, cursor:'pointer', background:sira?PROGRAM_SIRA_RENK:color+'35', color:sira?PROGRAM_SIRA_METIN:color, border:sira?`1px solid ${PROGRAM_SIRA_RENK}`:`1px solid ${color}60`, outline:ihlal?'2px solid #ef4444':undefined}}>
-                                        {musaitDegil?'🚫 ':ihlal&&'⚠️ '}{sira&&<span style={{fontSize:8, fontWeight:800, padding:'0 4px', marginRight:3, borderRadius:6, background:PROGRAM_SIRA_METIN, color:PROGRAM_SIRA_RENK}}>sıra</span>}{ad}{o&&<span style={{opacity:0.6, marginLeft:2}}>%{o.yuzde}</span>}
+                                        {musaitDegil?'🚫 ':ihlal&&'⚠️ '}{elleMi&&<span data-elle-rozet style={{fontSize:8, fontWeight:800, padding:'0 4px', marginRight:3, borderRadius:6, background:'#f59e0b', color:'#1e1b4b'}}>elle eklendi</span>}{sira&&<span style={{fontSize:8, fontWeight:800, padding:'0 4px', marginRight:3, borderRadius:6, background:PROGRAM_SIRA_METIN, color:PROGRAM_SIRA_RENK}}>sıra</span>}{ad}{o&&<span style={{opacity:0.6, marginLeft:2}}>%{o.yuzde}</span>}
+                                        <span data-program-cikar={ad} title="Oturumdan çıkar" onClick={e=>{e.stopPropagation();toggleOgrenci(oturum.id,ad);}} style={{marginLeft:4, fontWeight:900, opacity:0.75, cursor:'pointer'}}>×</span>
                                       </span>
                                     );
                                   })}
@@ -3964,6 +4012,34 @@ function EtutSistemi() {
                                     )}
                                   </details>
                                 )}
+                                {(()=>{
+                                  // @@ELLE-EKLE: aramalı kutu — karnedeki TÜM öğrenciler; serbest isim de eklenebilir
+                                  const yazi = elleArama[oturum.id] || '';
+                                  const q = elleAramaAnahtari(yazi);
+                                  const tumAdlar = [...new Set(studs.map(s=>s.ogrenci).filter(Boolean))];
+                                  const oneri = q ? tumAdlar.filter(a=>elleAramaAnahtari(a).includes(q) && !oturum.ogrenciler.includes(a)).sort((a,b)=>a.localeCompare(b,'tr')).slice(0,8) : [];
+                                  const tamEsles = tumAdlar.find(a=>elleAramaAnahtari(a)===q);
+                                  const hedef = tamEsles || yazi.trim();
+                                  const uyari = q ? elleUyarilar(oturum.id, hedef) : [];
+                                  return (
+                                    <div data-elle-ekle={oturum.id} style={{marginTop:6, padding:6, borderRadius:7, border:'1px solid rgba(245,158,11,0.35)', background:'rgba(245,158,11,0.06)'}}>
+                                      <div style={{display:'flex', gap:4}}>
+                                        <input data-elle-input={oturum.id} value={yazi} placeholder="+ Öğrenci ekle (ad yaz)…" onChange={e=>setElleArama(p=>({...p, [oturum.id]:e.target.value}))}
+                                          onKeyDown={e=>{ if(e.key==='Enter'){ e.preventDefault(); elleEkle(oturum.id, oneri.length===1 && !tamEsles ? oneri[0] : hedef); } }}
+                                          style={{flex:1, minWidth:0, padding:'3px 6px', borderRadius:5, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontSize:10}}/>
+                                        <button className="btn" data-elle-ekle-btn={oturum.id} disabled={!yazi.trim()} onClick={()=>elleEkle(oturum.id, hedef)}
+                                          style={{padding:'2px 8px', borderRadius:5, background:'#f59e0b', border:'none', color:'#1e1b4b', fontSize:10, fontWeight:800, opacity:yazi.trim()?1:0.4}}>Ekle</button>
+                                      </div>
+                                      {oneri.length>0 && <div style={{display:'flex', flexWrap:'wrap', gap:3, marginTop:4}}>
+                                        {oneri.map(a=>{ const uy = elleUyarilar(oturum.id, a); return (
+                                          <span key={a} data-elle-oneri={a} onClick={()=>elleEkle(oturum.id, a)} title={uy.length?('⚠️ '+uy.join(' · ')+' — yine de eklenir'):'Eklemek için tıkla'}
+                                            style={{padding:'2px 7px', borderRadius:12, fontSize:9, cursor:'pointer', background:'rgba(255,255,255,0.06)', color:uy.length?'#fbbf24':'#e2e8f0', border:'1px solid rgba(255,255,255,0.12)'}}>{uy.length?'⚠️ ':''}{a}</span>); })}
+                                      </div>}
+                                      {q && !tamEsles && oneri.length===0 && <div data-elle-serbest style={{fontSize:9, color:'#fbbf24', marginTop:3}}>Karnede yok — "{yazi.trim()}" serbest isim olarak eklenecek</div>}
+                                      {uyari.length>0 && <div data-elle-uyari={oturum.id} style={{fontSize:9, color:'#fca5a5', marginTop:3}}>⚠️ {uyari.join(' · ')}</div>}
+                                    </div>
+                                  );
+                                })()}
                                 {doluMu && <div style={{fontSize:9, color:'#f87171', marginTop:3}}>🔴 Kapasite dolu — çıkarmak için öğrencinin üstüne tıkla</div>}
                               </div>
                             );
