@@ -758,7 +758,7 @@ function subeDersOrtalamalari(students, esik) {
   const ozet = (kume, d) => {
     const v = kume.map(o => o.yuzde[d]).filter(x => x !== undefined);
     if (!v.length) return null;
-    return { ort: Math.round(v.reduce((t, x) => t + x, 0) / v.length), n: v.length, esikAlti: esikVar ? v.filter(x => x < Number(esik)).length : null };
+    return { ort: Math.round(v.reduce((t, x) => t + x, 0) / v.length), n: v.length, esikAlti: esikVar ? v.filter(x => x < Number(esik) && x >= GENEL_ARALIK.min).length : null };
   };
   const satirlar = dersler.map(d => {
     const okul = ozet(kayitlar, d);
@@ -905,7 +905,7 @@ function exportExcel(students, groups, threshold, weekLabel) {
 
   // Sheet 4: Ders ortalamaları
   const dersler = [...new Set(students.flatMap(s => s.konular.map(k => k.ders)))];
-  const avgRows = [["Ders","Konu","Sınıf Ort. %","Eşik Altı Öğrenci Sayısı"]];
+  const avgRows = [["Ders","Konu","Sınıf Ort. %",`Aralıktaki (${genelAralikMetni()}) Öğrenci Sayısı`]];
   const topicMap = {};
   students.forEach(s => s.konular.forEach(k => {
     const key = `${k.ders}||${k.konu}`;
@@ -914,7 +914,7 @@ function exportExcel(students, groups, threshold, weekLabel) {
   }));
   Object.values(topicMap).sort((a,b) => a.ders.localeCompare(b.ders)).forEach(t => {
     const avg = Math.round(t.vals.reduce((a,v)=>a+v,0)/t.vals.length);
-    const below = t.vals.filter(v => v < threshold).length;
+    const below = t.vals.filter(v => genelAraliktaMi(v)).length;
     avgRows.push([t.ders, t.konu, avg, below]);
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(avgRows), "Ders Ortalamaları");
@@ -950,7 +950,7 @@ function exportWord(students, groups, threshold, weekLabel) {
 <div class="header-box">
   <b>Toplam Öğrenci:</b> ${students.length} &nbsp;|&nbsp;
   <b>Etüt Grubu:</b> ${groups.length} &nbsp;|&nbsp;
-  <b>Eşik:</b> %${threshold} &nbsp;|&nbsp;
+  <b>Genel aralık:</b> ${genelAralikMetni()} &nbsp;|&nbsp;
   <b>Tarih:</b> ${date}
 </div>`;
 
@@ -989,9 +989,9 @@ function exportWord(students, groups, threshold, weekLabel) {
     html += `<div style="border:1pt solid #e2e8f0;border-radius:4pt;padding:14pt;margin-bottom:12pt">
 <h3>Sayın ${s.ogrenci} velisi,</h3>
 <p style="margin:6pt 0">Bu hafta gerçekleştirilen deneme sınavı sonucuna göre öğrencinizin
-<b>%${threshold} başarı eşiğinin altında</b> kaldığı konular tespit edilmiştir.</p>`;
+<b>${genelAralikMetni()} genel aralığında</b> kaldığı konular tespit edilmiştir.</p>`;
     if (myG.length === 0) {
-      html += `<p class="green">✅ Tüm konularda eşiğin üzerinde — bu hafta etüt gerekmemektedir.</p>`;
+      html += `<p class="green">✅ Hiçbir konu genel aralıkta değil — bu hafta etüt gerekmemektedir.</p>`;
     } else {
       html += `<p>Aşağıdaki etütlere katılması önerilmektedir:</p>
 <table><tr><th>Ders</th><th>Konu</th><th>Başarı %</th><th>Grup Kişi Sayısı</th></tr>`;
@@ -1018,7 +1018,7 @@ function exportWord(students, groups, threshold, weekLabel) {
 function generateWA(student, groups, threshold) {
   const myG = groups.filter(g => g.ogrenciler.some(o => o.ad === student.ogrenci));
   if (myG.length === 0)
-    return `Sayın veli, ${student.ogrenci} öğrenciniz bu hafta tüm konularda %${threshold} eşiğinin üzerindedir. Tebrikler! 🎉`;
+    return `Sayın veli, ${student.ogrenci} öğrenciniz bu hafta ${GENEL_ARALIK.min > 0 ? `hiçbir konuda ${genelAralikMetni()} aralığında değildir; bu hafta etüt gerekmemektedir.` : `tüm konularda %${threshold} ve üzerindedir. Tebrikler! 🎉`}`;
   const konuListesi = myG.map(g => {
     const me = g.ogrenciler.find(o => o.ad === student.ogrenci);
     return `• ${g.ders} - ${g.konu} (%${Math.round(me?.yuzde??0)})`;
@@ -1580,8 +1580,8 @@ function programGerekce(grp, ad, esik) {
   const hedef = o.detay && o.detay.length
     ? `${birlesikDetayMetni(o.detay, " + ")} → ${grp.ders} birleşik %${o.yuzde} (${birlesikOrtEtiketi(o)})`
     : `${grp.ders} - ${grp.konu} %${o.yuzde}`;
-  const esikMetni = esik === undefined || esik === null ? "" : ` eşik %${esik}`;
-  return esikAlti ? `Etüt nedeni: ${hedef}${esikMetni ? " <" + esikMetni : ""}` : `Sıra: ${hedef}${esikMetni ? " ≥" + esikMetni : ""} — boş kontenjan`;
+  const esikMetni = esik === undefined || esik === null ? "" : ` genel aralık %${GENEL_ARALIK.min}–${esik - 1}`;
+  return esikAlti ? `Etüt nedeni: ${hedef}${esikMetni ? " ∈" + esikMetni : ""}` : `Sıra: ${hedef}${esikMetni ? " — aralık üstü (" + esikMetni.trim() + ")" : ""} — boş kontenjan`;
 }
 
 // Oturum Hazırlık kartı (1609-hazirlik, salt okunur): öğretmen oturuma girmeden önce kimin hangi konuda zayıf olduğunu görür.
@@ -1635,6 +1635,31 @@ function programHazirlik(oturum, grp, ogrenciKayitlari, konuGruplari, esik) {
   return { ogrenciler, ortakKonular, ortakAlt };
 }
 // @@PROGRAM-KURALI-BITIR
+
+// @@GENEL-ARALIK-BASLA
+// 2010-genel-aralik (kullanıcı 20.10): üst çubuktaki genel "Eşik %X" kaydırıcısı yerine genel ARALIK [min, max] (ikisi dahil).
+// Varsayılan 0 – (eski eşik varsayılanı 50) − 1 = 0–49 → eski "eşik altı" davranışı BİREBİR (yüzdeler yuvarlanmış tam sayı).
+// İç uyum: eski kodun `threshold` değişkeni = max + 1 olarak TÜRETİLİR; böylece "y < threshold" ⇔ "y ≤ max" ve program motoru
+// (programDengeliAta, rapor, özet) hiç değişmez. Alt sınır yalnız gruba alım / zayıf konu / sayımlarda uygulanır:
+//   • min = 0  → eski eşik gibi: aralıktakiler grupta, üstündekiler `esikUstu` (sıra) ile boş kontenjanı doldurmaya DEVAM eder.
+//   • min > 0  → aralık dışı doldurma YOK (esikUstu boş); min altı öğrenci de gruba girmez — @@ARALIK-MODU grup aralığıyla tutarlı.
+// Kalıcı: localStorage GENEL_ARALIK_STORAGE_KEY. Eski sürümde eşik kaydedilmiyordu; yine de ATAYURT_ESIK bulunursa 0–(eşik−1) göç edilir.
+const GENEL_ARALIK_STORAGE_KEY = "ATAYURT_GENEL_ARALIK";
+const GENEL_ARALIK_VARSAYILAN = { min: 0, max: 49 };
+let GENEL_ARALIK = { ...GENEL_ARALIK_VARSAYILAN }; // her render'da bileşen günceller (export/gerekçe metinleri için)
+function genelAralikOku() {
+  try {
+    const ls = window.localStorage;
+    const k = JSON.parse(ls.getItem(GENEL_ARALIK_STORAGE_KEY) || "null");
+    if (k && aralikDogrula(k.min, k.max) === null) return { min: Number(k.min), max: Number(k.max) };
+    const eski = Number(ls.getItem("ATAYURT_ESIK"));
+    if (ls.getItem("ATAYURT_ESIK") !== null && Number.isFinite(eski) && eski > 0) return { min: 0, max: Math.min(100, eski - 1) };
+  } catch (e) {}
+  return { ...GENEL_ARALIK_VARSAYILAN };
+}
+function genelAralikMetni(a) { const x = a || GENEL_ARALIK; return `%${x.min}–${x.max}`; }
+function genelAraliktaMi(y, a) { const x = a || GENEL_ARALIK; return y !== null && y !== undefined && Number(y) >= x.min && Number(y) <= x.max; }
+// @@GENEL-ARALIK-BITIR
 
 // @@ARALIK-MODU-BASLA
 // 0810-aralik (kullanıcı 08.10): etüt grubu başına "Aralık" modu. Varsayılan "Eşik altı" — mevcut davranış BİREBİR.
@@ -1797,7 +1822,11 @@ function sonrakiHaftaEtiketi(labels) {
 function EtutSistemi() {
   const [weeks, setWeeks] = useState([]); // [{label, students}]
   const [activeWeek, setActiveWeek] = useState(0);
-  const [threshold, setThreshold] = useState(50);
+  const [genelAralik, setGenelAralikState] = useState(() => genelAralikOku()); // @@GENEL-ARALIK
+  const [genelTaslak, setGenelTaslak] = useState(null);
+  const threshold = genelAralik.max + 1; // @@GENEL-ARALIK: eski eşik = üst sınır + 1 (motor uyumu)
+  GENEL_ARALIK = genelAralik;
+  const setGenelAralik = (a) => { setGenelAralikState(a); try { window.localStorage.setItem(GENEL_ARALIK_STORAGE_KEY, JSON.stringify(a)); } catch (e) {} };
   const [loading, setLoading] = useState(false);
   const [loadingName, setLoadingName] = useState("");
   const [loadingProgress, setLoadingProgress] = useState({ done:0, total:0 });
@@ -2014,7 +2043,9 @@ function EtutSistemi() {
           ? { ad, yuzde: b.yuzde, agirlik: b.agirlik, detay: birlesikDetay(uyeKonular) }
           : { ad, yuzde: b.yuzde };
         (tum[groupKey] = tum[groupKey] || { ders: val.ders, konu: val.konu, altKonular: val.altKonular, kayitlar: [] }).kayitlar.push(kayit);
-        if (b.yuzde >= thr) { (ust[groupKey] = ust[groupKey] || []).push(kayit); return; }
+        // @@GENEL-ARALIK: min>0 iken aralık altı da, üstü de gruba/sıraya girmez (aralık dışı doldurma yok)
+        if (b.yuzde >= thr) { if (GENEL_ARALIK.min <= 0) (ust[groupKey] = ust[groupKey] || []).push(kayit); return; }
+        if (b.yuzde < GENEL_ARALIK.min) return;
         if (!map[groupKey]) {
           map[groupKey] = {
             ders: val.ders,
@@ -2106,7 +2137,7 @@ function EtutSistemi() {
         const yuzde = birlesikYuzde(v.uyeler).yuzde;
         return { groupKey: v.groupKey, ders: v.ders, konu: v.konu, altKonular: v.altKonular, yuzde };
       })
-      .filter(v => v.yuzde !== null && v.yuzde < thr)
+      .filter(v => v.yuzde !== null && v.yuzde < thr && v.yuzde >= GENEL_ARALIK.min)
       .sort((a, b) => a.yuzde - b.yuzde || String(a.konu).localeCompare(String(b.konu), 'tr'));
   };
 
@@ -2597,10 +2628,25 @@ function EtutSistemi() {
 
           {/* Threshold slider */}
           <div style={{display:"flex",alignItems:"center",gap:10,background:"rgba(255,255,255,0.05)",borderRadius:10,padding:"8px 14px"}}>
-            <span style={{fontSize:11,color:"#64748b",whiteSpace:"nowrap"}}>Eşik:</span>
-            <input type="range" min="20" max="80" value={threshold} onChange={e=>setThreshold(+e.target.value)}
-              className="range" style={{width:90,accentColor:"#6366f1"}} />
-            <span style={{fontWeight:800,fontSize:16,color:"#818cf8",minWidth:32}}>%{threshold}</span>
+            {/* @@GENEL-ARALIK: eşik kaydırıcısı yerine genel aralık (en az – en çok, ikisi dahil); Enter/blur ile uygulanır */}
+            {(()=>{
+              const t = genelTaslak || genelAralik;
+              const hata = genelTaslak ? aralikDogrula(t.min, t.max) : null;
+              const uygulaG = () => { if (!genelTaslak) return; if (aralikDogrula(genelTaslak.min, genelTaslak.max) !== null) return; setGenelAralik({min:Number(genelTaslak.min), max:Number(genelTaslak.max)}); setGenelTaslak(null); };
+              const ginp = {width:46,padding:"3px 4px",borderRadius:6,border:"1px solid "+(hata?"#f87171":"rgba(255,255,255,0.18)"),background:"rgba(255,255,255,0.06)",color:"#e2e8f0",fontSize:13,fontWeight:800,textAlign:"center"};
+              const kenar = (e, digerAttr) => { const r = e.relatedTarget; if (!(r && r.dataset && r.dataset[digerAttr] !== undefined)) uygulaG(); };
+              return (<>
+                <span style={{fontSize:11,color:"#64748b",whiteSpace:"nowrap"}}>Aralık %</span>
+                <input data-genel-aralik-min type="number" min="0" max="100" value={t.min} onChange={e=>setGenelTaslak({...t, min:e.target.value})}
+                  onKeyDown={e=>{if(e.key==='Enter')uygulaG();}} onBlur={e=>kenar(e,'genelAralikMax')} style={ginp} title="En az (dahil)"/>
+                <span style={{color:"#94a3b8"}}>–</span>
+                <input data-genel-aralik-max type="number" min="0" max="100" value={t.max} onChange={e=>setGenelTaslak({...t, max:e.target.value})}
+                  onKeyDown={e=>{if(e.key==='Enter')uygulaG();}} onBlur={e=>kenar(e,'genelAralikMin')} style={ginp} title="En çok (dahil)"/>
+                {genelTaslak && <button className="btn" data-genel-aralik-uygula onClick={uygulaG} disabled={!!hata} title={hata||"Enter ya da kutudan çıkınca da uygulanır"}
+                  style={{padding:"2px 8px",borderRadius:6,background:hata?"rgba(248,113,113,0.2)":"#f59e0b",border:"1px solid #fbbf24",color:hata?"#fca5a5":"#1e1b4b",fontSize:11,fontWeight:800}}>{hata?"⚠️":"Uygula ●"}</button>}
+                <span data-genel-aralik-etiket style={{fontWeight:800,fontSize:13,color:"#818cf8",whiteSpace:"nowrap"}}>{genelAralikMetni(genelAralik)}</span>
+              </>);
+            })()}
             <span data-esik-aciklama style={{fontSize:10,color:"#94a3b8",maxWidth:170,lineHeight:1.25}}>Etüt yüzdesi = doğru/soru (karnedeki net başarı % değil).</span>
           </div>
 
@@ -2902,17 +2948,18 @@ function EtutSistemi() {
                             {ek ? <span style={{fontSize:10, fontWeight:700, color:'#34d399'}}>➕ Ek aralık grubu</span> : (
                               <select data-aralik-mod={g.key} value={mod} onChange={e=>e.target.value==='esik' ? esikYap() : setAralikTaslak(p=>({...p, [g.key]:{...t, acik:true}}))}
                                 style={{padding:'2px 5px', borderRadius:5, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontSize:10}}>
-                                <option value="esik" style={{background:'#1e293b'}}>Eşik altı (%{threshold})</option>
+                                <option value="esik" style={{background:'#1e293b'}}>Genel aralık ({genelAralikMetni(genelAralik)})</option>
                                 <option value="aralik" style={{background:'#1e293b'}}>Aralık</option>
                               </select>
                             )}
                             {mod==='aralik' && (<>
                               <span style={{fontSize:10, color:'#94a3b8'}}>%</span>
-                              <input data-aralik-min={g.key} type="number" min="0" max="100" value={t.min} onChange={e=>yaz('min', e.target.value)} style={inp}/>
+                              <input data-aralik-min={g.key} type="number" min="0" max="100" value={t.min} onChange={e=>yaz('min', e.target.value)} onKeyDown={e=>{if(e.key==='Enter')uygula();}} onBlur={e=>{if(tsl&&!(e.relatedTarget&&e.relatedTarget.dataset&&e.relatedTarget.dataset.aralikMax===g.key))uygula();}} style={inp}/>
                               <span style={{fontSize:10, color:'#94a3b8'}}>–</span>
-                              <input data-aralik-max={g.key} type="number" min="0" max="100" value={t.max} onChange={e=>yaz('max', e.target.value)} style={inp}/>
+                              <input data-aralik-max={g.key} type="number" min="0" max="100" value={t.max} onChange={e=>yaz('max', e.target.value)} onKeyDown={e=>{if(e.key==='Enter')uygula();}} onBlur={e=>{if(tsl&&!(e.relatedTarget&&e.relatedTarget.dataset&&e.relatedTarget.dataset.aralikMin===g.key))uygula();}} style={inp}/>
                               {(tsl || !g.aralik) && <button className="btn" data-aralik-uygula={g.key} onClick={uygula}
-                                style={{padding:'1px 8px', borderRadius:5, background:'rgba(16,185,129,0.15)', border:'1px solid rgba(16,185,129,0.4)', color:'#34d399', fontSize:10, fontWeight:700}}>Uygula</button>}
+                                data-aralik-bekliyor={tsl?'1':'0'} title="Enter ya da kutudan çıkınca da uygulanır"
+                                style={tsl?{padding:'1px 8px', borderRadius:5, background:'#f59e0b', border:'1px solid #fbbf24', color:'#1e1b4b', fontSize:10, fontWeight:800, boxShadow:'0 0 0 2px rgba(245,158,11,0.35)'}:{padding:'1px 8px', borderRadius:5, background:'rgba(16,185,129,0.15)', border:'1px solid rgba(16,185,129,0.4)', color:'#34d399', fontSize:10, fontWeight:700}}>{tsl?'Uygula ●':'Uygula'}</button>}
                             </>)}
                             {g.aralik && <span data-aralik-etiket={g.key} style={{fontSize:10, fontWeight:800, padding:'1px 7px', borderRadius:8, background:'rgba(16,185,129,0.15)', color:'#34d399'}}>{aralikEtiketi(g.aralik)}</span>}
                             <div style={{flex:1}}/>
@@ -3032,7 +3079,7 @@ function EtutSistemi() {
                                     {myWeak.map((g,gi)=>{
                                       const {color}=getMeta(g.ders);
                                       const isEtut=assignedKeys.has(g.groupKey);
-                                      return(<span key={gi} title={isEtut?"Atanan etüt":"Eşik altı"} style={{display:"inline-flex",alignItems:"center",gap:2,padding:"1px 6px",borderRadius:20,fontSize:10,fontWeight:600,background:color+"20",color,border:isEtut?"1px solid "+color:"1px solid transparent"}}>
+                                      return(<span key={gi} title={isEtut?"Atanan etüt":"Genel aralıkta"} style={{display:"inline-flex",alignItems:"center",gap:2,padding:"1px 6px",borderRadius:20,fontSize:10,fontWeight:600,background:color+"20",color,border:isEtut?"1px solid "+color:"1px solid transparent"}}>
                                         <span style={{opacity:0.75,fontSize:9}}>#{gi+1}</span> {g.ders}·{g.konu} <span style={{opacity:0.6,fontSize:9}}>%{Math.round(g.yuzde)}</span>
                                       </span>);
                                     })}
@@ -3048,7 +3095,7 @@ function EtutSistemi() {
                               <td style={{padding:"9px 12px"}}>
                                 <button className="btn" onClick={()=>{
                                   const rows=myWeak.map(g=>"<tr><td><b>"+g.ders+"</b></td><td>"+g.konu+"</td><td><span style='background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700'>%"+Math.round(g.yuzde)+"</span></td><td>"+(assignedKeys.has(g.groupKey)?"Etüt":"—")+"</td></tr>").join("");
-                                  const body=myWeak.length===0?"<p style='color:#16a34a'>Eşik altı konu yok</p>":"<table><tr><th>Ders</th><th>Konu</th><th>%</th><th>Durum</th></tr>"+rows+"</table>";
+                                  const body=myWeak.length===0?"<p style='color:#16a34a'>Genel aralıkta konu yok</p>":"<table><tr><th>Ders</th><th>Konu</th><th>%</th><th>Durum</th></tr>"+rows+"</table>";
                                   const html="<html><head><meta charset='utf-8'><style>body{font-family:Arial;padding:28px;color:#1e293b;max-width:560px;margin:0 auto}h2{margin:0 0 3px;font-size:19px}table{width:100%;border-collapse:collapse;margin-top:6px}th{background:#1e293b;color:#fff;padding:6px 10px;text-align:left;font-size:11px}td{padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:12px}</style></head><body><h2>"+s.ogrenci+"</h2><div style='color:#64748b;font-size:12px;margin-bottom:16px'>Eşik %"+threshold+" · "+new Date().toLocaleDateString("tr-TR")+"</div>"+body+"</body></html>";
                                   const w=window.open("","_blank");w.document.write(html);w.document.close();w.print();
                                 }} style={{padding:"3px 9px",borderRadius:6,border:"1px solid rgba(99,102,241,0.3)",background:"rgba(99,102,241,0.1)",color:"#818cf8",fontWeight:600,fontSize:10}}>🖨️</button>
@@ -3088,7 +3135,7 @@ function EtutSistemi() {
                                 </div>
                               )}
                               <div style={{fontSize:10,color:s.nameUnknown?"#fb923c":myWeak.length>0?"#f87171":"#34d399",marginTop:1}}>
-                                {s.nameUnknown?"❓ İsim girilmeli":myWeak.length>0?`⚠️ ${myWeak.length} konu eşik altı`:"✅ Tümü eşik üstü"}
+                                {s.nameUnknown?"❓ İsim girilmeli":myWeak.length>0?`⚠️ ${myWeak.length} konu aralıkta (${genelAralikMetni()})`:"✅ Hiçbir konu aralıkta değil"}
                               </div>
                               {programOturumlar.length>0 && !s.nameUnknown && (()=>{
                                 const etutSay=programOturumlar.filter(o=>o.ogrenciler.includes(s.ogrenci)).length;
@@ -3372,7 +3419,7 @@ function EtutSistemi() {
                   {visibleGroups.length>0&&(
                     <div style={{marginTop:20,background:"rgba(99,102,241,0.08)",border:"1px solid rgba(99,102,241,0.2)",borderRadius:12,padding:"12px 16px"}}>
                       <div style={{fontWeight:600,color:"#818cf8",fontSize:12,marginBottom:4}}>📋 Birleştirme Özeti</div>
-                      <div style={{fontSize:11,color:"#64748b",marginBottom:8}}>Etüt grupları canlı: <b style={{color:"#c7d2fe"}}>{groups.length}</b> grup · eşik %{threshold}. Konu birleşince öğrenci etütleri yeniden hesaplanır.</div>
+                      <div style={{fontSize:11,color:"#64748b",marginBottom:8}}>Etüt grupları canlı: <b style={{color:"#c7d2fe"}}>{groups.length}</b> grup · genel aralık {genelAralikMetni(genelAralik)}. Konu birleşince öğrenci etütleri yeniden hesaplanır.</div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                         {visibleGroups.map(([gKey,g])=>{
                           const {color}=getMeta(g.ders);
@@ -3414,7 +3461,7 @@ function EtutSistemi() {
                     Renk: <span style={{color:"#ef4444"}}>■</span> %0–49 kritik &nbsp;
                     <span style={{color:"#f59e0b"}}>■</span> %50–69 orta &nbsp;
                     <span style={{color:"#22c55e"}}>■</span> %70–100 iyi &nbsp;·&nbsp;
-                    Her hücrede sınıf ortalaması gösterilir. Eşik altı sayısı parantez içinde.
+                    Her hücrede sınıf ortalaması gösterilir. Genel aralıktaki öğrenci sayısı parantez içinde.
                   </div>
                   {dersler.map(ders => {
                     const konular = Object.keys(topicMap[ders]).sort();
@@ -3428,7 +3475,7 @@ function EtutSistemi() {
                           {konular.map(konu => {
                             const vals = topicMap[ders][konu];
                             const avg = Math.round(vals.reduce((a,v)=>a+v,0)/vals.length);
-                            const belowCount = vals.filter(v=>v<threshold).length;
+                            const belowCount = vals.filter(v=>genelAraliktaMi(v, genelAralik)).length;
                             const bgColor = avg < threshold ? "rgba(239,68,68,0.15)" : avg < 70 ? "rgba(245,158,11,0.15)" : "rgba(34,197,94,0.12)";
                             const borderColor = avg < threshold ? "#ef4444" : avg < 70 ? "#f59e0b" : "#22c55e";
                             const textColor = avg < threshold ? "#f87171" : avg < 70 ? "#fbbf24" : "#86efac";
@@ -3437,7 +3484,7 @@ function EtutSistemi() {
                                 <div style={{fontSize:10,color:"#94a3b8",marginBottom:4,lineHeight:1.3}}>{konu}</div>
                                 <div style={{fontFamily:"'Outfit',sans-serif",fontWeight:800,fontSize:22,color:textColor}}>%{avg}</div>
                                 <div style={{fontSize:10,color:"#64748b",marginTop:2}}>
-                                  {belowCount>0 ? <span style={{color:"#f87171"}}>⚠️ {belowCount} öğrenci eşik altı</span> : <span style={{color:"#34d399"}}>✅ Tümü eşik üstü</span>}
+                                  {belowCount>0 ? <span style={{color:"#f87171"}}>⚠️ {belowCount} öğrenci aralıkta</span> : <span style={{color:"#34d399"}}>✅ Aralıkta öğrenci yok</span>}
                                 </div>
                                 <div style={{marginTop:6,background:"rgba(255,255,255,0.07)",borderRadius:4,height:4}}>
                                   <div style={{height:"100%",width:`${avg}%`,background:borderColor,borderRadius:4,transition:"width 0.5s"}}/>
@@ -3802,7 +3849,7 @@ function EtutSistemi() {
                                       <div style={{fontSize:10, fontWeight:800, color:'#2dd4bf', marginBottom:2}}>📋 Hazırlık — {gun.gunAdi}{gun.tarih?` ${gun.tarih}`:''} {oturum.saat} · {oturum.ders} - {oturum.konu}{grp?.aralik ? ` · ${aralikEtiketi(grp.aralik)}` : ''}</div>
                                       {grp?.aralik
                                         ? <div data-hazirlik-aralik={oturum.id} style={{fontSize:9, color:'#64748b', marginBottom:6}}>{aralikEtiketi(grp.aralik)} grubu: zayıf = üst sınır %{grp.aralik.max} ve altı (doğru/soru). Salt okunur; programı değiştirmez.</div>
-                                        : <div style={{fontSize:9, color:'#64748b', marginBottom:6}}>Zayıf = eşik %{threshold} altı (doğru/soru). Salt okunur; programı değiştirmez.</div>}
+                                        : <div style={{fontSize:9, color:'#64748b', marginBottom:6}}>Zayıf = genel aralık {genelAralikMetni(genelAralik)} içinde (doğru/soru). Salt okunur; programı değiştirmez.</div>}
                                       {hz.ogrenciler.length===0 ? (
                                         <div style={{fontSize:9, color:'#475569', fontStyle:'italic'}}>Bu oturumda öğrenci yok.</div>
                                       ) : (<>
@@ -3867,7 +3914,7 @@ function EtutSistemi() {
                                   <input type="number" min="1" max="99" value={oturum.kapasite} onChange={e=>updateOturum(oturum.id,'kapasite',Math.max(1,+e.target.value||1))}
                                     style={{width:44, padding:'2px 5px', borderRadius:5, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontSize:11, textAlign:'center'}}/>
                                   <span style={{fontSize:10, color:doluMu?'#f87171':'#34d399', fontWeight:700}}>{oturum.ogrenciler.length}/{oturum.kapasite} öğrenci</span>
-                                  {siraSayisi>0 && <span data-program-sira-sayisi={siraSayisi} style={{fontSize:10, color:'#94a3b8'}}>· {oturum.ogrenciler.length-siraSayisi} eşik altı + {siraSayisi} sıra</span>}
+                                  {siraSayisi>0 && <span data-program-sira-sayisi={siraSayisi} style={{fontSize:10, color:'#94a3b8'}}>· {oturum.ogrenciler.length-siraSayisi} aralıkta + {siraSayisi} sıra</span>}
                                 </div>
                                 {/* Kayıtlı öğrenciler (tıkla çıkar) */}
                                 <div style={{display:'flex', flexWrap:'wrap', gap:3}}>
@@ -3904,10 +3951,10 @@ function EtutSistemi() {
                                     )}
                                     {eklenebilirSira.length>0 && (
                                       <div data-program-eklenebilir-sira style={{marginTop:4, padding:6, borderRadius:7, border:`1px dashed ${PROGRAM_SIRA_RENK}55`}}>
-                                        <div style={{fontSize:9, color:PROGRAM_SIRA_RENK, marginBottom:3}}>Sıra — eşik üstü, düşük % önce:</div>
+                                        <div style={{fontSize:9, color:PROGRAM_SIRA_RENK, marginBottom:3}}>Sıra — aralık üstü, düşük % önce:</div>
                                         <div style={{display:'flex', flexWrap:'wrap', gap:3}}>
                                           {eklenebilirSira.map(o=>(
-                                            <span key={o.ad} data-program-sira-aday={o.ad} onClick={()=>toggleOgrenci(oturum.id,o.ad)} title="Sıra (eşik üstü) — eklemek için tıkla"
+                                            <span key={o.ad} data-program-sira-aday={o.ad} onClick={()=>toggleOgrenci(oturum.id,o.ad)} title="Sıra (aralık üstü) — eklemek için tıkla"
                                               style={{padding:'2px 7px', borderRadius:12, fontSize:9, cursor:'pointer', background:PROGRAM_SIRA_RENK+'1f', color:PROGRAM_SIRA_RENK, border:`1px dashed ${PROGRAM_SIRA_RENK}80`}}>
                                               {o.ad}<span style={{opacity:0.5, marginLeft:2}}>%{o.yuzde}</span>
                                             </span>
@@ -3939,7 +3986,7 @@ function EtutSistemi() {
                   style={{marginTop:22, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)', borderRadius:14, padding:14}}>
                   <div style={{fontFamily:"'Outfit',sans-serif", fontSize:15, fontWeight:800, color:'#f1f5f9', marginBottom:8}}>📊 Haftalık Özet</div>
                   <div style={{display:'flex', gap:10, flexWrap:'wrap', marginBottom:8}}>
-                    {[[ozet.deneme,'Denemeye giren','#818cf8'],[ozet.yazilan,'Etüt yazılan','#34d399'],[ozet.gelmeyen,'Bu hafta etüte gelmeyecek','#fbbf24'],[ozet.esikAltiYazilmayan,'Eşik altı ama yazılmayan','#fca5a5'],[ozet.toplamEtut,'Toplam etüt kaydı (öğrenci × oturum)','#fda4af']].map(([v,l,c])=>(
+                    {[[ozet.deneme,'Denemeye giren','#818cf8'],[ozet.yazilan,'Etüt yazılan','#34d399'],[ozet.gelmeyen,'Bu hafta etüte gelmeyecek','#fbbf24'],[ozet.esikAltiYazilmayan,'Aralıkta ama yazılmayan','#fca5a5'],[ozet.toplamEtut,'Toplam etüt kaydı (öğrenci × oturum)','#fda4af']].map(([v,l,c])=>(
                       <div key={l} style={{background:'rgba(255,255,255,0.04)', borderRadius:10, padding:'8px 14px', minWidth:130}}>
                         <div style={{fontWeight:800, fontSize:20, color:c}}>{v}</div>
                         <div style={{fontSize:10, color:'#94a3b8'}}>{l}</div>
@@ -3954,7 +4001,7 @@ function EtutSistemi() {
                   {ozet.esikAltiYazilmayan>0 && (
                     <div data-program-esikdisi={ozet.esikAltiYazilmayan}
                       style={{background:'rgba(239,68,68,0.06)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:10, padding:'10px 14px', marginBottom:8}}>
-                      <div style={{fontSize:12, fontWeight:800, color:'#fca5a5', marginBottom:3}}>⚠️ Eşik altı ama yazılmayan ({ozet.esikAltiYazilmayan})</div>
+                      <div style={{fontSize:12, fontWeight:800, color:'#fca5a5', marginBottom:3}}>⚠️ Aralıkta ama yazılmayan ({ozet.esikAltiYazilmayan})</div>
                       <div style={{fontSize:10, color:'#94a3b8', marginBottom:6}}>
                         En az bir eşik altı grubunda olup programda hiç oturumu olmayan öğrenci. Sebep ayrılmaz: kapasite dolu, gün/saat veya müsaitlik çakışması ya da o dersin hiç oturumu açılmamış olması.
                       </div>
@@ -4046,9 +4093,9 @@ function EtutSistemi() {
                     </div>
                     <div style={{fontSize:11, color:'#94a3b8', marginBottom:8}}>
                       {sg.aralik ? <span data-sira-aralik={aralikEtiketi(sg.aralik)}>{aralikEtiketi(sg.aralik)}: <b style={{color}}>{sg.ogrenciler.length} öğrenci aralıkta</b> · aralık dışından doldurma yok</span>
-                        : <>Eşik %{threshold}: <b style={{color}}>{sg.ogrenciler.length} eşik altı</b> · <b style={{color:PROGRAM_SIRA_RENK}}>{(sg.esikUstu||[]).length} eşik üstü (sıra)</b></>}
-                      {' · '}programda {grupOturum.length} oturum, toplam kapasite {grupOturum.reduce((a,o)=>a+o.kapasite,0)} → yerleşen {yerlesenEsik} eşik altı + {yerlesenSira} sıra
-                      {acikEsik>0 && grupOturum.length>0 && <span style={{color:'#fca5a5'}}> · {acikEsik} eşik altı öğrenci henüz yerleşmedi</span>}
+                        : <>Genel aralık {genelAralikMetni(genelAralik)}: <b style={{color}}>{sg.ogrenciler.length} aralıkta</b> · <b style={{color:PROGRAM_SIRA_RENK}}>{(sg.esikUstu||[]).length} aralık üstü (sıra)</b></>}
+                      {' · '}programda {grupOturum.length} oturum, toplam kapasite {grupOturum.reduce((a,o)=>a+o.kapasite,0)} → yerleşen {yerlesenEsik} aralıkta + {yerlesenSira} sıra
+                      {acikEsik>0 && grupOturum.length>0 && <span style={{color:'#fca5a5'}}> · {acikEsik} aralıktaki öğrenci henüz yerleşmedi</span>}
                     </div>
                     <div style={{maxHeight:420, overflowY:'auto', borderRadius:8, border:'1px solid rgba(255,255,255,0.06)'}}>
                       <table style={{width:'100%', borderCollapse:'collapse'}}>
@@ -4351,7 +4398,7 @@ function EtutSistemi() {
                                   const renk=!h?"#475569":h.durum==="alt"?"#f87171":h.durum==="ust"?"#34d399":"#e2e8f0";
                                   return(
                                     <td key={sb} data-sube-hucre={r.ders+"|"+sb} data-sube-ort={h?h.ort:""} data-sube-durum={h?h.durum||"":""}
-                                      title={h?`${h.n} öğrenci · eşik altı ${h.esikAlti}`:"veri yok"}
+                                      title={h?`${h.n} öğrenci · aralıkta ${h.esikAlti}`:"veri yok"}
                                       style={{padding:"6px 10px",textAlign:"center",borderBottom:"1px solid rgba(255,255,255,0.05)",background:h&&h.durum==="alt"?"rgba(239,68,68,0.08)":h&&h.durum==="ust"?"rgba(34,197,94,0.08)":"transparent"}}>
                                       {h?(
                                         <>
