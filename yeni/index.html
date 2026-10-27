@@ -228,7 +228,7 @@ function getMeta(ders) {
 
 // @@KONU-HIYERARSI-BASLA
 // Karne hiyerarşisi: Ders → Ana konu (etüt birimi) → Alt başlık → Kazanım. Etüt grubu / eşik / takvim YALNIZ ana konu
-// düzeyinde çalışır; alt başlık ve kazanım etüt açmaz.
+// düzeyinde normalize edilir; /yeni'de etüt birimi konuSeviyesineIndir ile konu düzeyidir.
 // 1409c (kullanıcı 14.09): ayrım BELGENİN YAPISINDAN gelir — konu adı listesi (whitelist) YOKTUR. Sinyaller, öncelik sırasıyla:
 //   1) açık seviye: PDF metin katmanındaki girinti (`seviye`), Vision/JSON'daki iç içe {konu, altBasliklar[], kazanimlar[]}
 //   2) cümle biçimi: noktayla biten, "-ebilme", "yönelik", "Students will…" satırları kazanımdır
@@ -2090,8 +2090,9 @@ function EtutSistemi() {
   }
 
   // 2710-konu: grup seviyesi (Ünite / Konu), varsayılan Konu; localStorage'da.
-  const [grupSeviye, _setGrupSeviye] = useState(() => { try { return window.localStorage.getItem(GRUP_SEVIYE_KEY) === "unite" ? "unite" : "konu"; } catch (e) { return "konu"; } });
-  const setGrupSeviye = (v) => { _setGrupSeviye(v); try { window.localStorage.setItem(GRUP_SEVIYE_KEY, v); } catch (e) {} };
+  // 2710d: /yeni'de tek standart = konu birimi; ünite modu ve eski kayıtlı seçim (v1/v2 "unite") yok sayılır.
+  const grupSeviye = "konu";
+  try { window.localStorage.removeItem(GRUP_SEVIYE_KEY); } catch (e) {}
   const studsHam = weeks[activeWeek]?.students || [];
   // 2710c: öğretmenin ayırdığı kazanımlar (normalize metin → kısa ad), v2 anahtarı, sonraki karnelerde aynı metne otomatik uygulanır.
   const [ayrikKazanimlar, _setAyrik] = useState(() => { try { return JSON.parse(window.localStorage.getItem(AYRI_KAZANIM_KEY) || "{}") || {}; } catch (e) { return {}; } });
@@ -3063,13 +3064,9 @@ function EtutSistemi() {
                 ))}
               </div>
             )}
-            <div data-grup-seviye style={{display:'flex', alignItems:'center', gap:8, margin:'0 0 10px', fontSize:12, color:'#94a3b8'}}>
-              <b style={{color:'#e2e8f0'}}>Grup seviyesi:</b>
-              {[["unite","Ünite"],["konu","Konu"]].map(([v,l])=>(
-                <span key={v} className="btn" data-grup-seviye-sec={v} onClick={()=>setGrupSeviye(v)}
-                  style={{padding:'4px 12px', borderRadius:8, fontWeight:700, cursor:'pointer', border:'1px solid '+(grupSeviye===v?'rgba(99,102,241,0.6)':'rgba(255,255,255,0.1)'), background:grupSeviye===v?'rgba(99,102,241,0.2)':'transparent', color:grupSeviye===v?'#a5b4fc':'#64748b'}}>{l}</span>
-              ))}
-              <span style={{fontSize:10}}>{grupSeviye==='konu' ? 'Alt konular (ör. Çarpanlar ve Katlar) ayrı grup; alt konusu olmayan ünite aynen kalır.' : 'Gruplar ünite (ana konu) düzeyinde.'}</span>
+            <div data-grup-seviye="konu" style={{display:'flex', alignItems:'center', gap:8, margin:'0 0 10px', fontSize:12, color:'#94a3b8'}}>
+              <b style={{color:'#e2e8f0'}}>Etüt birimi: konu</b>
+              <span style={{fontSize:10}}>Kazanımların hemen üstündeki konu başlığı bir kart/grup olur (ör. Çarpanlar ve Katlar); alt konusu olmayan ünite aynen kalır. Kazanımlar kartın içinde listelenir, istenen “✂ Ayrı grup yap” ile ayrılır.</span>
             </div>
             {/* @@ARALIK-MODU (0810-aralik): Aralık grubu ekle — eşik üstü (başarılı) öğrenciler de ayrı aralıklarla çağrılabilir */}
             {Object.keys(grupAdaylari).length>0 && (()=>{
@@ -3411,7 +3408,7 @@ function EtutSistemi() {
                 allKonuMap[rk].count++;
                 const km=allKonuMap[rk];
                 if(k.yuzdeKaynagi) km.kaynak[k.yuzdeKaynagi]=(km.kaynak[k.yuzdeKaynagi]||0)+1;
-                // Alt başlık ve kazanımlar ana konunun altında özetlenir (ad → ortalama %, öğrenci sayısı); etüt açmaz.
+                // Alt başlık ve kazanımlar ana konunun altında özetlenir (ad → ortalama %, öğrenci sayısı); konu kartı etüt birimidir.
                 const ozetle=(hedef,ad,y,sonraki)=>{
                   const e=hedef[ad]||(hedef[ad]={toplam:0,adet:0,sonrakiKonuya:false});
                   e.toplam+=y||0; e.adet++; if(sonraki) e.sonrakiKonuya=true;
@@ -3515,7 +3512,7 @@ function EtutSistemi() {
                                 const altAdlari=Object.keys(k.altBasliklar||{});
                                 return(
                                   <button type="button" key={k.rawKey}
-                                    title={(altAdlari.length||kzAdlari.length)?"Etüt açmaz — alt başlıklar: "+(altAdlari.join(", ")||"yok")+" · kazanım: "+kzAdlari.length:undefined}
+                                    title={(altAdlari.length||kzAdlari.length)?"Konu kartı — kazanım: "+kzAdlari.length+(altAdlari.length?" · alt başlık: "+altAdlari.join(", "):""):undefined}
                                     onClick={(e)=>{ e.stopPropagation(); toggleSeciliKonu(k.rawKey); }}
                                     style={{padding:"6px 11px",borderRadius:8,cursor:"pointer",userSelect:"none",fontSize:11,fontWeight:isSel?700:500,transition:"all 0.15s",
                                       background:isSel?"rgba(99,102,241,0.45)":(inGroup?"rgba(255,255,255,0.04)":color+"18"),
@@ -3525,13 +3522,13 @@ function EtutSistemi() {
                                   </button>
                                 );
                               })}
-                              {/* Seçilen ana konunun alt başlık + kazanımları — bilgi amaçlı, etüt ataması ana konu düzeyinde kalır */}
+                              {/* Konu kartının kazanımları + Ayrı grup yap */}
                               {konular.filter(k=>(seciliKonular.includes(k.rawKey)||(grupSeviye==="konu"&&Object.keys(k.kazanimSorulu||{}).length>0))&&(Object.keys(k.kazanimlar||{}).length>0||Object.keys(k.altBasliklar||{}).length>0)).map(k=>{
                                 const satir=([ad,e])=>`${ad} · ort %${Math.round(e.toplam/e.adet)} (${e.adet} öğr.)${e.sonrakiKonuya?" · sıra belirsiz (sonraki konuya bağlandı)":""}`;
                                 const kay=k.kaynak||{};
                                 return(
                                 <div key={"kz-"+k.rawKey} data-kazanim-panel={k.konu} style={{flexBasis:"100%",background:"rgba(255,255,255,0.03)",border:"1px dashed "+color+"55",borderRadius:8,padding:"6px 10px",fontSize:11,color:"#cbd5e1",lineHeight:1.6}}>
-                                  📎 <b>{k.konu}</b> <span style={{opacity:0.6}}>{grupSeviye==="konu"?"(konu = etüt birimi; kazanımlar burada listelenir, istenen \"Ayrı grup yap\" ile ayrılır)":"(ana konu = etüt birimi; alt başlık ve kazanım etüt açmaz)"}</span>
+                                  📎 <b>{k.konu}</b> <span style={{opacity:0.6}}>(konu = etüt birimi; kazanımlar burada listelenir, istenen "Ayrı grup yap" ile ayrılır)</span>
                                   <div data-yuzde-kaynagi={k.konu} style={{opacity:0.75}}>
                                     Yüzde: karnedeki ana konu satırı ({kay.karne||0} öğr.){kay["alt-ortalama"]?` · alt başlık ortalaması (${kay["alt-ortalama"]} öğr. — karnede ana konu satırı yok)`:""}{kay["kazanim-ortalama"]?` · kazanım ortalaması (${kay["kazanim-ortalama"]} öğr.)`:""}
                                   </div>
