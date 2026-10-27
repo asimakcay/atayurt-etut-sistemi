@@ -304,7 +304,7 @@ function _yuzdeSayi(v) {
 function kazanimListesiTemizle(arr) {
   return (Array.isArray(arr) ? arr : [])
     .filter(z => z && (z.kazanim || z.konu))
-    .map(z => ({ kazanim: String(z.kazanim || z.konu).trim(), yuzde: _yuzdeSayi(z.yuzde) ?? 0, ...(z.sonrakiKonuya ? { sonrakiKonuya: true } : {}) }));
+    .map(z => ({ kazanim: String(z.kazanim || z.konu).trim(), yuzde: _yuzdeSayi(z.yuzde) ?? 0, ...(z.soru != null ? { soru: z.soru, dogru: z.dogru ?? null, yanlis: z.yanlis ?? null } : {}), ...(z.sonrakiKonuya ? { sonrakiKonuya: true } : {}) }));
 }
 function altBaslikListesiTemizle(arr) {
   return (Array.isArray(arr) ? arr : [])
@@ -433,7 +433,7 @@ function karneNormalize(konular, hafta) {
       return { ...kalan, ders: s.ders, konu: s.metin, yuzde: s.yuzde, seviye: 1, altBasliklar: [], kazanimlar: [], ...(turetildi ? { turetildi: true } : {}) };
     }
     if (tur[i] === "alt") { const h = s.ham || {}; return { altBaslik: s.metin, yuzde: s.yuzde, ...(h.soru != null ? { soru: h.soru, dogru: h.dogru ?? null, yanlis: h.yanlis ?? null } : {}), kazanimlar: [] }; }
-    return { kazanim: s.metin, yuzde: s.yuzde ?? 0 };
+    { const h = s.ham || {}; return { kazanim: s.metin, yuzde: s.yuzde ?? 0, ...(h.soru != null ? { soru: h.soru, dogru: h.dogru ?? null, yanlis: h.yanlis ?? null } : {}) }; }
   });
   const sira = satirlar.map((_, i) => i);
   const yetimKazanimlar = [], yetimAltBasliklar = [];
@@ -559,6 +559,17 @@ function haftaHiyerarsisi(ogrenciler) {
 }
 // 2710-konu: grup seviyesi "konu" — ünitenin alt konuları (karnede Sayı/Doğru/Yanlış/% taşıyan alt başlıklar) ayrı etüt birimi olur.
 // Alt konusu olmayan ünite (ör. Türkçe OKUMA → doğrudan kazanımlar, İngilizce Friendship) olduğu gibi kalır. Saf; kayıtlı veri değişmez.
+// 2710b-kazanim: Konu seviyesinde, bir ALT KONUNUN altındaki kazanım satırı karnede kendi Sayı/Doğru/Yanlış/% değerini taşıyorsa
+// (ör. Çarpanlar ve Katlar → "İki doğal sayının EBOB ve EKOK..."), o kazanım da ayrı seçilebilir konu kartı ve ayrı etüt birimi olur.
+// Üst alt konu (karnedeki kendi satırı) da kart olarak kalır. Doğrudan ünite altındaki kazanımlar (OKUMA, KADER İNANCI…) bölünmez:
+// orada ünite zaten konunun kendisidir. Ad: metindeki parantez içi kısaltmalar (EBOB, EKOK → "EBOB-EKOK"), yoksa kısaltılmış metin.
+function kazanimKonuAdi(metin) {
+  const t = String(metin || "").replace(/\s+/g, " ").trim();
+  const kis = [...t.matchAll(/\(([A-ZÇĞİÖŞÜ]{2,8})\)/g)].map(m => m[1]);
+  if (kis.length) return [...new Set(kis)].join("-");
+  const c = t.replace(/[.;]+$/, "");
+  return c.length > 48 ? c.slice(0, 46).replace(/\s+\S*$/, "") + "…" : c;
+}
 function konuSeviyesineIndir(students) {
   return (Array.isArray(students) ? students : []).map(s => {
     if (!s || !Array.isArray(s.konular)) return s;
@@ -568,6 +579,8 @@ function konuSeviyesineIndir(students) {
       if (!altlar.length) { konular.push(k); return; }
       altlar.forEach(a => konular.push({ ders: k.ders, konu: a.altBaslik, yuzde: a.yuzde ?? 0, yuzdeKaynagi: "karne", seviye: 1, unite: k.konu,
         ...(a.soru != null ? { soru: a.soru, dogru: a.dogru, yanlis: a.yanlis } : {}), altBasliklar: [], kazanimlar: a.kazanimlar || [] }));
+      altlar.forEach(a => (a.kazanimlar || []).filter(z => z && z.kazanim && z.soru != null).forEach(z => konular.push({ ders: k.ders, konu: kazanimKonuAdi(z.kazanim), yuzde: z.yuzde ?? 0,
+        yuzdeKaynagi: "karne", seviye: 1, unite: k.konu, ustKonu: a.altBaslik, kazanimMetni: z.kazanim, soru: z.soru, dogru: z.dogru, yanlis: z.yanlis, altBasliklar: [], kazanimlar: [] })));
     });
     return { ...s, konular };
   });
@@ -1798,7 +1811,10 @@ function elleEtiket(o, ad) { return Array.isArray(o && o.elle) && o.elle.include
 // "Kayıtlı program bulundu — Yükle / Yok say" şeridi çıkar (öğretmenin o an kurduğu programı habersiz ezmemek için daha güvenli).
 // Şerit açıkken ve program boşken otomatik kayıt YAZMAZ (kayıtlı program boş programla ezilmez). Motor/akış değişmez; tüm
 // localStorage/JSON işlemleri try/catch içinde — hata yalnız göstergede görünür, uygulama çökmez.
-const PROGRAM_KAYIT_ONEK = "ATAYURT_PROGRAM::";
+// 2710b: /yeni ana sayfayla aynı origin'i (localStorage) paylaşır. Ünite düzeyli eski kayıtlar konu düzeyini maskelemesin diye
+// /yeni kendi sürümlü anahtarlarını kullanır; eski anahtarlar (atayurt-grup-seviye, ATAYURT_PROGRAM::…) okunmaz ve SİLİNMEZ.
+const PROGRAM_KAYIT_ONEK = "ATAYURT_PROGRAM_V2::";
+const GRUP_SEVIYE_KEY = "atayurt-grup-seviye-v2";
 const PROGRAM_KAYIT_SURUM = 1;
 const PROGRAM_DOSYA_TUR = "atayurt-etut-program";
 function programKayitHash(adlar) {
@@ -1979,7 +1995,7 @@ function EtutSistemi() {
   // @@KG-TEMIZ (1509-kg-temiz): birleştirmeler haftanın sınavına aittir; öğrenci/hafta verisi uçucu olduğu için
   // gruplar da KALICI DEĞİL. Açılışta eski sürümlerin bıraktığı yetim "ATAYURT_KONU_GRUPLARI" kaydı silinir,
   // yeni hafta yüklenince (JSON/PDF/foto/demo) birleştirmeler ve program sıfırlanır. Müsaitlik ada göre kalır.
-  const KG_STORAGE_KEY = "ATAYURT_KONU_GRUPLARI";
+  const KG_STORAGE_KEY = "ATAYURT_KONU_GRUPLARI_V2"; // 2710b: /yeni ana sayfa ile aynı origin → ayrı anahtar; ana sayfanın kaydına dokunulmaz
   const [konuGruplari, setKonuGruplari] = useState(() => {
     try { window.localStorage.removeItem(KG_STORAGE_KEY); } catch (e) {}
     return {};
@@ -2041,8 +2057,8 @@ function EtutSistemi() {
   }
 
   // 2710-konu: grup seviyesi (Ünite / Konu), varsayılan Konu; localStorage'da.
-  const [grupSeviye, _setGrupSeviye] = useState(() => { try { return window.localStorage.getItem("atayurt-grup-seviye") === "unite" ? "unite" : "konu"; } catch (e) { return "konu"; } });
-  const setGrupSeviye = (v) => { _setGrupSeviye(v); try { window.localStorage.setItem("atayurt-grup-seviye", v); } catch (e) {} };
+  const [grupSeviye, _setGrupSeviye] = useState(() => { try { return window.localStorage.getItem(GRUP_SEVIYE_KEY) === "unite" ? "unite" : "konu"; } catch (e) { return "konu"; } });
+  const setGrupSeviye = (v) => { _setGrupSeviye(v); try { window.localStorage.setItem(GRUP_SEVIYE_KEY, v); } catch (e) {} };
   const studsHam = weeks[activeWeek]?.students || [];
   const studs = useMemo(() => grupSeviye === "konu" ? konuSeviyesineIndir(studsHam) : studsHam, [studsHam, grupSeviye]);
   const students = studs;
@@ -3477,7 +3493,7 @@ function EtutSistemi() {
                                 const kay=k.kaynak||{};
                                 return(
                                 <div key={"kz-"+k.rawKey} data-kazanim-panel={k.konu} style={{flexBasis:"100%",background:"rgba(255,255,255,0.03)",border:"1px dashed "+color+"55",borderRadius:8,padding:"6px 10px",fontSize:11,color:"#cbd5e1",lineHeight:1.6}}>
-                                  📎 <b>{k.konu}</b> <span style={{opacity:0.6}}>(ana konu = etüt birimi; alt başlık ve kazanım etüt açmaz)</span>
+                                  📎 <b>{k.konu}</b> <span style={{opacity:0.6}}>{grupSeviye==="konu"?"(Konu seviyesi: bu kart etüt birimi; ayrı Sayı/% taşıyan kazanımlar ayrıca kart olur)":"(ana konu = etüt birimi; alt başlık ve kazanım etüt açmaz)"}</span>
                                   <div data-yuzde-kaynagi={k.konu} style={{opacity:0.75}}>
                                     Yüzde: karnedeki ana konu satırı ({kay.karne||0} öğr.){kay["alt-ortalama"]?` · alt başlık ortalaması (${kay["alt-ortalama"]} öğr. — karnede ana konu satırı yok)`:""}{kay["kazanim-ortalama"]?` · kazanım ortalaması (${kay["kazanim-ortalama"]} öğr.)`:""}
                                   </div>
