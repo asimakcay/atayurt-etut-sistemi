@@ -1164,6 +1164,7 @@ function otomatikYerlestir(groups, takvim) {
 // ve slotCakisanlar / takvimIhlalleri aynen kullanılır → hafta içi günde 1, hafta sonu çoklu, aynı gün+saat asla.
 // Aynı adı taşıyan iki gün kartı (ör. iki "Pazartesi") aynı gün sayılır.
 const PROGRAM_KAPASITE = 10;
+const PROGRAM_KAPASITE_MAX = 10;
 // Sıra (eşik üstü doldurma) öğrencisinin zemin rengi: 5. sınıf ders renklerinde (mavi/kırmızı/yeşil/turuncu/mor/camgöbeği) yok,
 // bakınca eşik altından ayrılır (kullanıcı 15.09). Metin lacivert.
 const PROGRAM_SIRA_RENK = "#facc15";
@@ -1912,7 +1913,8 @@ function EtutSistemi() {
   // Haftalık Etüt Programı (v15): gün kartları + oturumlar — şekil @@PROGRAM-KURALI bloğunda.
   const [programGunler, setProgramGunler] = useState([]);
   const [programOturumlar, setProgramOturumlar] = useState([]);
-  const [elleArama, setElleArama] = useState({}); // @@ELLE-EKLE: oturum id → yazılan ad
+  const [elleArama, setElleArama] = useState({});
+  const [kapasiteUyari, setKapasiteUyari] = useState({}); // @@ELLE-EKLE: oturum id → yazılan ad
   const [programSiraGrup, setProgramSiraGrup] = useState(''); // alttaki sıralama listesinde seçili grup ('' = programdaki ilk grup)
   // Hazırlık kartı açık oturumlar (1609-hazirlik): yalnız görünüm; oturum kaydına yazılmaz → atama/dengeleme tetiklenmez.
   const [programHazirlikAcik, setProgramHazirlikAcik] = useState({});
@@ -3754,6 +3756,9 @@ function EtutSistemi() {
               liste[i] = {...liste[i], ders:g?.ders||'', konu:g?.konu||'', ogrenciler:[], elle:[]};
               dengeliAta(liste); return;
             } else if (field==='kapasite') {
+              // @@KAPASITE: 1–10 arası; artınca uygun adaylar (aralıkta, müsait, o gün başka etüdü yok) anında dolar
+              const k = Math.min(PROGRAM_KAPASITE_MAX, Math.max(1, Math.round(+val)||1));
+              liste[i] = {...liste[i], kapasite:k};
               dengeliAta(liste); return;
             }
             // saat değişince öğrenci listesi korunur; kuralı bozan öğrenci ⚠️ ile işaretlenir, ihlal paneli açılır.
@@ -3763,13 +3768,14 @@ function EtutSistemi() {
             const o = programOturumlar.find(x=>x.id===oId);
             if (!o) return;
             if (o.ogrenciler.includes(ad)) {
-              setProgramOturumlar(programOturumlar.map(x => x.id===oId ? {...x, ogrenciler:x.ogrenciler.filter(a=>a!==ad), elle:(x.elle||[]).filter(a=>a!==ad)} : x));
+              setProgramOturumlar(prev => prev.map(x => x.id===oId ? {...x, ogrenciler:x.ogrenciler.filter(a=>a!==ad), elle:(x.elle||[]).filter(a=>a!==ad)} : x));
               return;
             }
             if (o.ogrenciler.length>=o.kapasite) return;
             if (!programMusaitMi(ogrMusait, ad, gunAdiOf(oId))) return; // gelemediği güne elle de yazılmaz
             if (programCakisiyor(programGunler, programOturumlar, oId, ad)) return;
-            setProgramOturumlar(programOturumlar.map(x => x.id===oId ? {...x, ogrenciler:[...x.ogrenciler, ad]} : x));
+            // @@KAPASITE: elle tıklanan öğrenci "elle" sayılır; sonraki Dengeli Ata / kapasite değişiminde silinmez
+            setProgramOturumlar(prev => prev.map(x => x.id===oId && !x.ogrenciler.includes(ad) ? {...x, ogrenciler:[...x.ogrenciler, ad], elle:[...(x.elle||[]).filter(a=>a!==ad), ad]} : x));
           };
           // @@ELLE-EKLE: kural yalnız uyarı; ekleme engellenmez
           const elleEkle = (oId, adHam) => {
@@ -3777,8 +3783,42 @@ function EtutSistemi() {
             if (!ad) return;
             const o = programOturumlar.find(x=>x.id===oId);
             if (!o || o.ogrenciler.includes(ad)) { setElleArama(p=>({...p, [oId]:''})); return; }
-            setProgramOturumlar(programOturumlar.map(x => x.id===oId ? {...x, ogrenciler:[...x.ogrenciler, ad], elle:[...(x.elle||[]).filter(a=>a!==ad), ad]} : x));
+            setProgramOturumlar(prev => prev.map(x => x.id===oId && !x.ogrenciler.includes(ad) ? {...x, ogrenciler:[...x.ogrenciler, ad], elle:[...(x.elle||[]).filter(a=>a!==ad), ad]} : x));
             setElleArama(p=>({...p, [oId]:''}));
+          };
+          // @@KAPASITE-OK: ▲ kapasite+1 ve en düşük yüzdeli uygun aday; ▼ kapasite−1 ve son otomatik eklenen çıkar (elle eklenenler korunur)
+          const kapasiteOk = (oId, yon) => {
+            const o = programOturumlar.find(x=>x.id===oId); if (!o) return;
+            const gunAdi = gunAdiOf(oId);
+            let mesaj = '';
+            let yeni;
+            if (yon > 0) {
+              if (o.kapasite >= PROGRAM_KAPASITE_MAX) { mesaj = `En çok ${PROGRAM_KAPASITE_MAX} kişi`; yeni = o; }
+              else {
+                const grp = groups.find(g=>g.key===o.grupKey);
+                const aday = [...(grp?.ogrenciler||[])]
+                  .filter(c => !o.ogrenciler.includes(c.ad) && programMusaitMi(ogrMusait, c.ad, gunAdi)
+                    && !programOturumlar.some(x => x.id!==oId && x.gunId===o.gunId && x.ogrenciler.includes(c.ad))
+                    && !programCakisiyor(programGunler, programOturumlar, oId, c.ad))
+                  .sort((a,b)=>Number(a.yuzde)-Number(b.yuzde))[0];
+                const ogr = (aday && o.ogrenciler.length < o.kapasite+1) ? [...o.ogrenciler, aday.ad] : o.ogrenciler;
+                if (!aday) mesaj = 'Aralıkta uygun öğrenci kalmadı';
+                yeni = {...o, kapasite:o.kapasite+1, ogrenciler:ogr};
+              }
+            } else {
+              if (o.kapasite <= 1) return;
+              const k = o.kapasite-1; let ogr = [...o.ogrenciler];
+              const elle = new Set(o.elle||[]);
+              while (ogr.length > k) {
+                const i = ogr.map((a,j)=>[a,j]).reverse().find(([a])=>!elle.has(a));
+                if (!i) { mesaj = 'Elle eklenenler korunuyor — kapasite aşıldı'; break; }
+                ogr.splice(i[1],1);
+              }
+              yeni = {...o, kapasite:k, ogrenciler:ogr};
+            }
+            setProgramOturumlar(prev => prev.map(x => x.id===oId ? yeni : x));
+            setKapasiteUyari(p=>({...p, [oId]:mesaj}));
+            if (mesaj) setTimeout(()=>setKapasiteUyari(p=>p[oId]===mesaj?{...p,[oId]:''}:p), 3500);
           };
           const elleUyarilar = (oId, ad) => {
             const o = programOturumlar.find(x=>x.id===oId); if (!o || !ad) return [];
@@ -4084,9 +4124,12 @@ function EtutSistemi() {
                                 {/* Kapasite */}
                                 <div style={{display:'flex', alignItems:'center', gap:6, marginBottom:7}}>
                                   <span style={{fontSize:10, color:'#64748b'}}>Kapasite:</span>
-                                  <input type="number" min="1" max="99" value={oturum.kapasite} onChange={e=>updateOturum(oturum.id,'kapasite',Math.max(1,+e.target.value||1))}
+                                  <button className="btn" data-kapasite-azalt={oturum.id} disabled={oturum.kapasite<=1} onClick={()=>kapasiteOk(oturum.id,-1)} title="Kapasiteyi 1 azalt (son otomatik eklenen çıkar)" style={{padding:'1px 8px', borderRadius:5, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontWeight:900, cursor:'pointer', opacity:oturum.kapasite<=1?0.4:1}}>▼</button>
+                                  <input type="number" data-kapasite-input={oturum.id} min="1" max={PROGRAM_KAPASITE_MAX} value={oturum.kapasite} onChange={e=>{ const v=e.target.value; if (v==='' || !(+v>=1)) return; updateOturum(oturum.id,'kapasite',+v); }}
                                     style={{width:44, padding:'2px 5px', borderRadius:5, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontSize:11, textAlign:'center'}}/>
-                                  <span style={{fontSize:10, color:doluMu?'#f87171':'#34d399', fontWeight:700}}>{oturum.ogrenciler.length}/{oturum.kapasite} öğrenci</span>
+                                  <button className="btn" data-kapasite-artir={oturum.id} disabled={oturum.kapasite>=PROGRAM_KAPASITE_MAX} onClick={()=>kapasiteOk(oturum.id,1)} title="Kapasiteyi 1 artır ve en uygun öğrenciyi ekle (en çok 10)" style={{padding:'1px 8px', borderRadius:5, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontWeight:900, cursor:'pointer', opacity:oturum.kapasite>=PROGRAM_KAPASITE_MAX?0.4:1}}>▲</button>
+                                  {kapasiteUyari[oturum.id] && <span data-kapasite-uyari={oturum.id} style={{fontSize:10, color:'#fbbf24', fontWeight:700}}>⚠️ {kapasiteUyari[oturum.id]}</span>}
+                                  <span data-kapasite-durum={oturum.id} style={{fontSize:10, color:doluMu?'#f87171':'#34d399', fontWeight:700}}>{oturum.ogrenciler.length}/{oturum.kapasite} öğrenci</span>
                                   {siraSayisi>0 && <span data-program-sira-sayisi={siraSayisi} style={{fontSize:10, color:'#94a3b8'}}>· {oturum.ogrenciler.length-siraSayisi} aralıkta + {siraSayisi} sıra</span>}
                                 </div>
                                 {/* Kayıtlı öğrenciler (tıkla çıkar) */}
