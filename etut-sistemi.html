@@ -1164,7 +1164,7 @@ function otomatikYerlestir(groups, takvim) {
 // ve slotCakisanlar / takvimIhlalleri aynen kullanılır → hafta içi günde 1, hafta sonu çoklu, aynı gün+saat asla.
 // Aynı adı taşıyan iki gün kartı (ör. iki "Pazartesi") aynı gün sayılır.
 const PROGRAM_KAPASITE = 10;
-const PROGRAM_KAPASITE_MAX = 10;
+// 2710-kapsinir: üst sınır kaldırıldı (alt sınır 1).
 // Sıra (eşik üstü doldurma) öğrencisinin zemin rengi: 5. sınıf ders renklerinde (mavi/kırmızı/yeşil/turuncu/mor/camgöbeği) yok,
 // bakınca eşik altından ayrılır (kullanıcı 15.09). Metin lacivert.
 const PROGRAM_SIRA_RENK = "#facc15";
@@ -3756,8 +3756,8 @@ function EtutSistemi() {
               liste[i] = {...liste[i], ders:g?.ders||'', konu:g?.konu||'', ogrenciler:[], elle:[]};
               dengeliAta(liste); return;
             } else if (field==='kapasite') {
-              // @@KAPASITE: 1–10 arası; artınca uygun adaylar (aralıkta, müsait, o gün başka etüdü yok) anında dolar
-              const k = Math.min(PROGRAM_KAPASITE_MAX, Math.max(1, Math.round(+val)||1));
+              // @@KAPASITE: en az 1, üst sınır yok; artınca uygun adaylar (aralıkta, müsait, o gün başka etüdü yok) anında dolar
+              const k = Math.max(1, Math.round(+val)||1);
               liste[i] = {...liste[i], kapasite:k};
               dengeliAta(liste); return;
             }
@@ -3771,11 +3771,10 @@ function EtutSistemi() {
               setProgramOturumlar(prev => prev.map(x => x.id===oId ? {...x, ogrenciler:x.ogrenciler.filter(a=>a!==ad), elle:(x.elle||[]).filter(a=>a!==ad)} : x));
               return;
             }
-            if (o.ogrenciler.length>=o.kapasite) return;
             if (!programMusaitMi(ogrMusait, ad, gunAdiOf(oId))) return; // gelemediği güne elle de yazılmaz
             if (programCakisiyor(programGunler, programOturumlar, oId, ad)) return;
             // @@KAPASITE: elle tıklanan öğrenci "elle" sayılır; sonraki Dengeli Ata / kapasite değişiminde silinmez
-            setProgramOturumlar(prev => prev.map(x => x.id===oId && !x.ogrenciler.includes(ad) ? {...x, ogrenciler:[...x.ogrenciler, ad], elle:[...(x.elle||[]).filter(a=>a!==ad), ad]} : x));
+            setProgramOturumlar(prev => prev.map(x => x.id===oId && !x.ogrenciler.includes(ad) ? {...x, kapasite:Math.max(x.kapasite, x.ogrenciler.length+1), ogrenciler:[...x.ogrenciler, ad], elle:[...(x.elle||[]).filter(a=>a!==ad), ad]} : x));
           };
           // @@ELLE-EKLE: kural yalnız uyarı; ekleme engellenmez
           const elleEkle = (oId, adHam) => {
@@ -3783,7 +3782,7 @@ function EtutSistemi() {
             if (!ad) return;
             const o = programOturumlar.find(x=>x.id===oId);
             if (!o || o.ogrenciler.includes(ad)) { setElleArama(p=>({...p, [oId]:''})); return; }
-            setProgramOturumlar(prev => prev.map(x => x.id===oId && !x.ogrenciler.includes(ad) ? {...x, ogrenciler:[...x.ogrenciler, ad], elle:[...(x.elle||[]).filter(a=>a!==ad), ad]} : x));
+            setProgramOturumlar(prev => prev.map(x => x.id===oId && !x.ogrenciler.includes(ad) ? {...x, kapasite:Math.max(x.kapasite, x.ogrenciler.length+1), ogrenciler:[...x.ogrenciler, ad], elle:[...(x.elle||[]).filter(a=>a!==ad), ad]} : x));
             setElleArama(p=>({...p, [oId]:''}));
           };
           // @@KAPASITE-OK: ▲ kapasite+1 ve en düşük yüzdeli uygun aday; ▼ kapasite−1 ve son otomatik eklenen çıkar (elle eklenenler korunur)
@@ -3793,8 +3792,7 @@ function EtutSistemi() {
             let mesaj = '';
             let yeni;
             if (yon > 0) {
-              if (o.kapasite >= PROGRAM_KAPASITE_MAX) { mesaj = `En çok ${PROGRAM_KAPASITE_MAX} kişi`; yeni = o; }
-              else {
+              {
                 const grp = groups.find(g=>g.key===o.grupKey);
                 const aday = [...(grp?.ogrenciler||[])]
                   .filter(c => !o.ogrenciler.includes(c.ad) && programMusaitMi(ogrMusait, c.ad, gunAdi)
@@ -3824,7 +3822,7 @@ function EtutSistemi() {
             const o = programOturumlar.find(x=>x.id===oId); if (!o || !ad) return [];
             const u = [];
             if (o.ogrenciler.includes(ad)) u.push('Zaten bu oturumda');
-            if (o.ogrenciler.length >= o.kapasite) u.push(`Kapasite dolu (${o.ogrenciler.length}/${o.kapasite}) — yine de eklenir`);
+            if (o.ogrenciler.length >= o.kapasite) u.push(`Kapasite dolu (${o.ogrenciler.length}/${o.kapasite}) — eklenir, kapasite ${o.ogrenciler.length+1} olur`);
             if (!programMusaitMi(ogrMusait, ad, gunAdiOf(oId))) u.push(`${gunAdiOf(oId)} müsait değil`);
             if (programCakisiyor(programGunler, programOturumlar, oId, ad)) u.push('Aynı gün/saatte başka etüdü var');
             return u;
@@ -4125,9 +4123,9 @@ function EtutSistemi() {
                                 <div style={{display:'flex', alignItems:'center', gap:6, marginBottom:7}}>
                                   <span style={{fontSize:10, color:'#64748b'}}>Kapasite:</span>
                                   <button className="btn" data-kapasite-azalt={oturum.id} disabled={oturum.kapasite<=1} onClick={()=>kapasiteOk(oturum.id,-1)} title="Kapasiteyi 1 azalt (son otomatik eklenen çıkar)" style={{padding:'1px 8px', borderRadius:5, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontWeight:900, cursor:'pointer', opacity:oturum.kapasite<=1?0.4:1}}>▼</button>
-                                  <input type="number" data-kapasite-input={oturum.id} min="1" max={PROGRAM_KAPASITE_MAX} value={oturum.kapasite} onChange={e=>{ const v=e.target.value; if (v==='' || !(+v>=1)) return; updateOturum(oturum.id,'kapasite',+v); }}
+                                  <input type="number" data-kapasite-input={oturum.id} min="1" value={oturum.kapasite} onChange={e=>{ const v=e.target.value; if (v==='' || !(+v>=1)) return; updateOturum(oturum.id,'kapasite',+v); }}
                                     style={{width:44, padding:'2px 5px', borderRadius:5, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontSize:11, textAlign:'center'}}/>
-                                  <button className="btn" data-kapasite-artir={oturum.id} disabled={oturum.kapasite>=PROGRAM_KAPASITE_MAX} onClick={()=>kapasiteOk(oturum.id,1)} title="Kapasiteyi 1 artır ve en uygun öğrenciyi ekle (en çok 10)" style={{padding:'1px 8px', borderRadius:5, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontWeight:900, cursor:'pointer', opacity:oturum.kapasite>=PROGRAM_KAPASITE_MAX?0.4:1}}>▲</button>
+                                  <button className="btn" data-kapasite-artir={oturum.id} onClick={()=>kapasiteOk(oturum.id,1)} title="Kapasiteyi 1 artır ve en uygun öğrenciyi ekle" style={{padding:'1px 8px', borderRadius:5, border:'1px solid rgba(255,255,255,0.15)', background:'rgba(255,255,255,0.06)', color:'#e2e8f0', fontWeight:900, cursor:'pointer', opacity:1}}>▲</button>
                                   {kapasiteUyari[oturum.id] && <span data-kapasite-uyari={oturum.id} style={{fontSize:10, color:'#fbbf24', fontWeight:700}}>⚠️ {kapasiteUyari[oturum.id]}</span>}
                                   <span data-kapasite-durum={oturum.id} style={{fontSize:10, color:doluMu?'#f87171':'#34d399', fontWeight:700}}>{oturum.ogrenciler.length}/{oturum.kapasite} öğrenci</span>
                                   {siraSayisi>0 && <span data-program-sira-sayisi={siraSayisi} style={{fontSize:10, color:'#94a3b8'}}>· {oturum.ogrenciler.length-siraSayisi} aralıkta + {siraSayisi} sıra</span>}
@@ -4210,7 +4208,7 @@ function EtutSistemi() {
                                     </div>
                                   );
                                 })()}
-                                {doluMu && <div style={{fontSize:9, color:'#f87171', marginTop:3}}>🔴 Kapasite dolu — çıkarmak için öğrencinin üstüne tıkla</div>}
+                                {doluMu && <div style={{fontSize:9, color:'#f87171', marginTop:3}}>🔴 Oturum dolu — ▲ ile artır ya da çıkarmak için öğrencinin üstüne tıkla</div>}
                               </div>
                             );
                           })}
