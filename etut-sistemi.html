@@ -3794,13 +3794,15 @@ function EtutSistemi() {
             if (yon > 0) {
               {
                 const grp = groups.find(g=>g.key===o.grupKey);
-                const aday = [...(grp?.ogrenciler||[])]
-                  .filter(c => !o.ogrenciler.includes(c.ad) && programMusaitMi(ogrMusait, c.ad, gunAdi)
+                // 2710-kapsinir: önce aralıktaki uygun adaylar (en düşük %), bitince "sıra" (esikUstu, Dengeli Ata sırası)
+                const uygun = c => !o.ogrenciler.includes(c.ad) && programMusaitMi(ogrMusait, c.ad, gunAdi)
                     && !programOturumlar.some(x => x.id!==oId && x.gunId===o.gunId && x.ogrenciler.includes(c.ad))
-                    && !programCakisiyor(programGunler, programOturumlar, oId, c.ad))
-                  .sort((a,b)=>Number(a.yuzde)-Number(b.yuzde))[0];
+                    && !programOturumlar.some(x => x.id!==oId && x.grupKey===o.grupKey && x.ogrenciler.includes(c.ad))
+                    && !programCakisiyor(programGunler, programOturumlar, oId, c.ad);
+                const aday = [...(grp?.ogrenciler||[])].filter(uygun).sort((a,b)=>Number(a.yuzde)-Number(b.yuzde))[0]
+                  || (grp?.esikUstu||[]).find(uygun);
                 const ogr = (aday && o.ogrenciler.length < o.kapasite+1) ? [...o.ogrenciler, aday.ad] : o.ogrenciler;
-                if (!aday) mesaj = 'Aralıkta uygun öğrenci kalmadı';
+                if (!aday) mesaj = 'Aralıkta uygun öğrenci kalmadı'; // sıra listesi de bittiyse
                 yeni = {...o, kapasite:o.kapasite+1, ogrenciler:ogr};
               }
             } else {
