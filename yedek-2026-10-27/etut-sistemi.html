@@ -14,7 +14,7 @@
 <body>
   <div id="root"></div>
   <script type="text/babel" data-presets="react">
-const { useState, useCallback, useRef, useEffect } = React;
+const { useState, useCallback, useRef, useEffect, useMemo } = React;
 let _sel = null; // module-level selected konu key
 
 // ─── PDF Parser (client-side via pdfjs) ─────────────────────────────────────
@@ -706,10 +706,12 @@ function karnePdfYapisiCoz(sayfalar) {
   let simdiki = null, ders = null, tabloluSayfa = 0;
   sayfaBilgi.forEach(sb => {
     if (sb.ogrenci) {
-      // Birleştirme anahtarı YALNIZ ad (1709-sube: kimlik bölünmez). Şube ilk dolu okumadan gelir, sonraki sayfa ezmez.
-      if (!adla[sb.ogrenci]) { adla[sb.ogrenci] = { ogrenci: sb.ogrenci, sube: sb.sube || "", konular: [], dersOzet: [] }; ogrenciler.push(adla[sb.ogrenci]); }
-      else if (!adla[sb.ogrenci].sube && sb.sube) adla[sb.ogrenci].sube = sb.sube;
-      simdiki = adla[sb.ogrenci]; ders = null;
+      // 2710: kimlik = ad + şube (aynı adlı iki şube öğrencisi birleşmez). Şubesi okunmayan sayfa aynı adlı son kayda eklenir.
+      const kayitlar = adla[sb.ogrenci] || (adla[sb.ogrenci] = []);
+      let k = sb.sube ? kayitlar.find(r => r.sube === sb.sube) || kayitlar.find(r => !r.sube) : (simdiki && simdiki.adHam === sb.ogrenci ? simdiki : kayitlar[kayitlar.length - 1]);
+      if (!k) { k = { ogrenci: sb.ogrenci, adHam: sb.ogrenci, sube: sb.sube || "", konular: [], dersOzet: [] }; kayitlar.push(k); ogrenciler.push(k); }
+      else if (!k.sube && sb.sube) k.sube = sb.sube;
+      simdiki = k; ders = null;
     }
     if (!sb.sutunlar.length || !simdiki) return;
     tabloluSayfa++;
@@ -726,6 +728,9 @@ function karnePdfYapisiCoz(sayfalar) {
         soru: d[0] ?? null, dogru: d[1] ?? null, yanlis: d[2] ?? null });
     }); });
   });
+  // Aynı ad birden çok şubede: görünen ad "AD (ŞUBE)" — program/oturum listeleri ada bağlı olduğundan kimlik ayrışır; müsaitlik şube+ad ile Excel'den eşleşir.
+  Object.values(adla).forEach(kayitlar => { if (kayitlar.length > 1) kayitlar.forEach(r => { if (r.sube) r.ogrenci = `${r.adHam} (${r.sube})`; }); });
+  ogrenciler.forEach(r => { delete r.adHam; });
   return { ogrenciler: ogrenciler.filter(o => o.konular.length), sayfaSayisi: sayfaBilgi.length, tabloluSayfa };
 }
 // @@KARNE-PDF-YAPI-BITIR
@@ -1174,26 +1179,36 @@ const PROGRAM_SIRA_METIN = "#1e1b4b";
 // musaitlik: { [programAdAnahtari(ad)]: ["Çarşamba", ...] } = öğrencinin GELEMEDİĞİ günler. Kaydı olmayan öğrenci her gün müsait
 // (varsayılan eski davranış). Atama fonksiyonlarına son (isteğe bağlı) parametre olarak verilir; verilmezse hepsi müsait.
 // Müsait olmayan güne otomatik/elle yazılmaz; kural (çakışma, zayıf önce) aynen durur.
-const PROGRAM_MUSAIT_STORAGE_KEY = "ATAYURT_OGRENCI_MUSAITLIK";
 // ── Gömülü öğrenci müsaitliği (Ekim 2026 Excel) ──
 // Yüklenen sürüm ayrı anahtarda tutulur. Aynı sürüm: hiçbir şey yapılmaz (kullanıcı düzenlemeleri korunur).
 // Yeni sürüm / boş depo: gömülü kayıtlar yazılır; gömülü listede olmayan elle eklenmiş öğrenciler korunur.
-const GOMULU_MUSAITLIK_SURUM = "2026-10-20-v1";
-const GOMULU_MUSAITLIK_SURUM_KEY = "ATAYURT_OGRENCI_MUSAITLIK_SURUM";
 const GOMULU_MUSAITLIK = {"DORUK KOYUN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "KEREM ÖZDERE": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "AHMET TUĞRUL GÜNEY": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "MERT ÖZKAN": ["Salı", "Cumartesi", "Pazar"], "SALİH METE YALÇIN": ["Çarşamba"], "MASAL ALTAYGİL": ["Pazartesi", "Salı", "Çarşamba"], "MAHİR DORUK YENİLMEZ": ["Pazartesi", "Salı", "Çarşamba", "Cumartesi", "Pazar"], "BADE AKALTAN": [], "CENGİZHAN ÜNVER": ["Pazartesi", "Salı", "Cumartesi", "Pazar"], "MASAL SOLAK": ["Cumartesi", "Pazar"], "İRFAN YAVAŞ": [], "BETÜL TÜRK": ["Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "TUNA TURAN": ["Salı", "Cuma", "Cumartesi", "Pazar"], "EREN ÖZCAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "HAMDİ KEREM KESER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "TOPRAK ÖZGÜN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "DEREN KOYUNLU": ["Pazartesi", "Salı", "Çarşamba", "Cuma"], "ECE KARA": ["Salı", "Perşembe"], "MUSTAFA KEMAL YAYLA": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "HAYRETTİN SELİM ALTUĞ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "EFE ÖZKAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ELİF ÇOMAK": ["Perşembe", "Cumartesi", "Pazar"], "YİĞİT KELEŞ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "DORUK NALBAT": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "GÜNEŞ GEZEN": ["Cumartesi", "Pazar"], "İPEK PİA DURMUŞ": ["Cumartesi", "Pazar"], "ARYA COŞKUN": [], "EYLÜL SOLAK": [], "BARIŞ SAKLAVCI": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "KAAN TUNA KAYA": ["Çarşamba", "Cumartesi", "Pazar"], "ALİ EREN ALTINSOY": ["Pazartesi", "Salı", "Perşembe", "Cumartesi", "Pazar"], "TURAN OĞUZ": [], "ÖMER İHSAN ORUK": ["Salı", "Cuma", "Cumartesi", "Pazar"], "MİRAY KARACA": ["Cumartesi", "Pazar"], "TUĞRA KOZPINAR": ["Pazartesi", "Salı", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "KADİR DORUK GÜNGÖR": ["Pazartesi", "Çarşamba", "Cuma"], "ELİZ ORAL": ["Pazartesi", "Cuma", "Cumartesi", "Pazar"], "KEREM TÜMER": ["Cumartesi", "Pazar"], "ECRİN YILMAZ": ["Salı", "Cumartesi", "Pazar"], "SERRA AKYIL": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "ÖMER KOÇAK": ["Cumartesi", "Pazar"], "ZEYNEP TARHANE": ["Pazartesi", "Salı", "Çarşamba", "Cuma"], "MEYRA BİRİNCİ": ["Pazartesi", "Salı", "Çarşamba"], "EREN KIRAY": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "DEFNE KALE": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "HASAN KAYRA KÖK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "ZEHRA ADA YILDIZ": ["Pazartesi", "Perşembe"], "EGE SAMED GENÇ": ["Çarşamba"], "EYMEN ÖFKELİ": ["Çarşamba", "Cumartesi", "Pazar"], "NİLDA ATAY": ["Salı", "Perşembe", "Cumartesi", "Pazar"], "MASAL ERGÖLEN": ["Pazartesi"], "EGEHAN ÇONA": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "DERİN BÖCEKÇİ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ASIM ARDA ÜNVER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "EFE DARCAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe"], "NİL MELEK ERGÖLEN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ELA AYŞE CEBECİ": ["Pazartesi", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "AYBERK ÖZTAŞ": ["Perşembe", "Cumartesi", "Pazar"], "MAYA DENİZ YILDIZ": ["Salı", "Perşembe", "Cuma"], "ALPEREN AKSOY": [], "AGAH OSMAN DOĞRU": ["Salı", "Çarşamba", "Perşembe"], "ASYA MİRA YEŞİLYURT": ["Salı", "Perşembe", "Cumartesi", "Pazar"], "DOĞA GÜNEY YELER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "MASAL ÇAKMAK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "DEMİR ÖZBAHÇIVANOĞLU": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "BEREN ERKAYA": ["Pazartesi", "Salı", "Perşembe", "Cuma"], "ZEYNEP KIRMIZI": ["Çarşamba", "Perşembe", "Cuma"], "BERK MENGÜLLÜOĞLU": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "UYGAR METE KIRAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "KAYRA EREN SARIER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ENES TEPEGÖZ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "BELİS KERVANKIRAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "AZRA KAYA": ["Pazartesi", "Salı", "Çarşamba", "Cumartesi", "Pazar"], "ZEYNEP KAYA": ["Pazartesi", "Salı", "Çarşamba", "Cumartesi", "Pazar"], "CİHANGİR CAN DÜZCE": ["Pazartesi", "Cuma", "Cumartesi", "Pazar"], "TAHA METE ÇİMEN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "MEHMET ILGAZ YOLAÇAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "MELİSA AYDIN": ["Salı", "Perşembe", "Cumartesi", "Pazar"], "SEVDE NAZ ÇİÇEK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "EFE DEMİREL": ["Cumartesi", "Pazar"], "KUZEY KESKİN": ["Salı", "Cumartesi", "Pazar"], "YAĞIZ YELBAŞI": ["Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ELİF BAĞCI": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "UZAY SARP TURGUT": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "BAHAR KILINÇ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ALP ARSLAN BALTUK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "DOĞA AKBAYIR": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ASLI AY": ["Çarşamba", "Cumartesi", "Pazar"], "YAĞMUR KARAGÜN": ["Cumartesi", "Pazar"], "ELİF KİRAZ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ARAS BULUT KAHVECİ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "CEMRE AYDEMİR": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "DURU MİNA ERBÖRÜ": ["Salı"], "KAAN EFE AKSOY": ["Pazartesi", "Çarşamba", "Cuma", "Cumartesi", "Pazar"], "ÖMER YAVUZ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "SARP SERHAT BİNGÜL": ["Perşembe", "Cumartesi", "Pazar"], "ÜLKÜ ECE BULUT": ["Pazartesi", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "NİL CEYLİN YAZAR": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cumartesi", "Pazar"], "NAZ ELİF YAZAR": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cumartesi", "Pazar"], "EFLİN DAMLA AYDOĞAN": ["Cumartesi", "Pazar"], "YUSUF AYDOĞAN": ["Pazartesi", "Salı"], "TAMER ARAS ÜNAL": ["Pazartesi", "Salı", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "İKLİM ERDEM": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ARAS TUNA ÇETİNKAYA": ["Salı", "Çarşamba", "Cumartesi", "Pazar"], "GÜNCE KÖTEŞ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "BARLAS MAZLUM": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "İPEK TUNALI": ["Pazartesi", "Salı", "Çarşamba", "Perşembe"], "KARAHAN SARIKAYA": [], "ELA DERİN ATIŞERİ": [], "NİL KEÇELİ": ["Pazartesi", "Salı", "Cumartesi", "Pazar"], "TOPRAK SEL": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "YAĞMUR AVNAMAK": [], "AYSU UYSAL": ["Salı", "Cuma"], "IRMAK SAKALLI": ["Salı", "Cumartesi", "Pazar"], "BERK EREN YENER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "ATAHAN ANBARCI": ["Pazartesi", "Salı", "Cumartesi", "Pazar"], "ATA ÇINAR BAŞKURT": ["Salı", "Cumartesi", "Pazar"], "ÇAĞAN ÇETİN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "EYMEN KAYRA OCAKÇI": ["Çarşamba"], "NECATİ ARDA BOZKURT": ["Pazartesi", "Salı", "Çarşamba", "Cuma", "Cumartesi", "Pazar"], "ÇAĞAN YAMAN": ["Çarşamba"], "ALİ EMRE HAN": ["Cumartesi", "Pazar"], "DERİN KÜÇÜK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "MURAT EYMEN KAYRAKLI": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "ATEŞ GÜDELEK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "MEHMET DOĞRU": ["Cumartesi", "Pazar"], "ELİF DEFNE BEKTAŞ": ["Salı", "Çarşamba", "Perşembe"], "BEREN ÖZEN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "DAMLA YAŞIT": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "ÖYKÜ IŞIL AYDIN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe"], "KEREM KARAHAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "YAĞIZ CAN": [], "BUĞLEM DURUSU": ["Cumartesi", "Pazar"], "ELİF KAHRAMAN": ["Çarşamba"], "KUZEY ÖZTAŞ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "HACER BEREN KIRAÇ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]};
-(function gomuluMusaitlikYukle() {
-  try {
-    if (typeof window === "undefined" || !window.localStorage) return;
-    const ls = window.localStorage;
-    let mevcut = null;
-    try { mevcut = JSON.parse(ls.getItem(PROGRAM_MUSAIT_STORAGE_KEY) || "null"); } catch (e) { mevcut = null; }
-    const bos = !mevcut || typeof mevcut !== "object" || Object.keys(mevcut).length === 0;
-    if (!bos && ls.getItem(GOMULU_MUSAITLIK_SURUM_KEY) === GOMULU_MUSAITLIK_SURUM) return;
-    const yeni = Object.assign({}, bos ? {} : mevcut, GOMULU_MUSAITLIK);
-    ls.setItem(PROGRAM_MUSAIT_STORAGE_KEY, JSON.stringify(yeni));
-    ls.setItem(GOMULU_MUSAITLIK_SURUM_KEY, GOMULU_MUSAITLIK_SURUM);
-  } catch (e) {}
-})();
+// 2710f: yedek — Excel (karne_girdi.xlsx → musaitlik/kontrol.csv) ŞUBE|AD anahtarlı; ortak (ana sayfa) müsaitlik deposuna yazılmaz/okunmaz.
+// null = Excel'de gün girilmemiş → kayıt yok (eski davranış: her gün müsait sayılır), UI'da uyarı gösterilir.
+const GOMULU_MUSAITLIK_SUBE = {"8/A|DORUK KOYUN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/A|KEREM ÖZDERE": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/A|AHMET TUĞRUL GÜNEY": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/A|MERT ÖZKAN": ["Salı", "Cumartesi", "Pazar"], "8/A|SALİH METE YALÇIN": ["Çarşamba"], "8/A|MASAL ALTAYGİL": ["Pazartesi", "Salı", "Çarşamba"], "8/A|MAHİR DORUK YENİLMEZ": ["Pazartesi", "Salı", "Çarşamba", "Cumartesi", "Pazar"], "8/A|BADE AKALTAN": [], "8/A|CENGİZHAN ÜNVER": ["Pazartesi", "Salı", "Cumartesi", "Pazar"], "8/A|MASAL SOLAK": ["Cumartesi", "Pazar"], "8/A|İRFAN YAVAŞ": [], "8/A|BETÜL TÜRK": ["Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/A|TUNA TURAN": ["Salı", "Cuma", "Cumartesi", "Pazar"], "8/A|EREN ÖZCAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/A|HAMDİ KEREM KESER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/A|TOPRAK ÖZGÜN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/A|DEREN KOYUNLU": ["Pazartesi", "Salı", "Çarşamba", "Cuma"], "8/A|ECE KARA": ["Salı", "Perşembe"], "8/A|MUSTAFA KEMAL YAYLA": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/A|HAYRETTİN SELİM ALTUĞ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/A|EFE ÖZKAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/A|ELİF ÇOMAK": ["Perşembe", "Cumartesi", "Pazar"], "8/A|YİĞİT KELEŞ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/A|DORUK NALBAT": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/B|GÜNEŞ GEZEN": ["Cumartesi", "Pazar"], "8/B|İPEK PİA DURMUŞ": ["Cumartesi", "Pazar"], "8/B|UMUT GÜZEL": null, "8/B|ARYA COŞKUN": [], "8/B|EYLÜL SOLAK": [], "8/B|BARIŞ SAKLAVCI": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/B|KAAN TUNA KAYA": ["Çarşamba", "Cumartesi", "Pazar"], "8/B|ALİ EREN ALTINSOY": ["Pazartesi", "Salı", "Perşembe", "Cumartesi", "Pazar"], "8/B|TURAN OĞUZ": [], "8/B|ÖMER İHSAN ORUK": ["Salı", "Cuma", "Cumartesi", "Pazar"], "8/B|MİRAY KARACA": ["Cumartesi", "Pazar"], "8/B|TUĞRA KOZPINAR": ["Pazartesi", "Salı", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/B|KADİR DORUK GÜNGÖR": ["Pazartesi", "Çarşamba", "Cuma"], "8/B|ELİZ ORAL": ["Pazartesi", "Cuma", "Cumartesi", "Pazar"], "8/B|KEREM TÜMER": ["Cumartesi", "Pazar"], "8/B|ECRİN YILMAZ": ["Salı", "Cumartesi", "Pazar"], "8/B|SERRA AKYIL": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/B|ÖMER KOÇAK": ["Cumartesi", "Pazar"], "8/B|ZEYNEP TARHANE": ["Pazartesi", "Salı", "Çarşamba", "Cuma"], "8/B|MEYRA BİRİNCİ": ["Pazartesi", "Salı", "Çarşamba"], "8/B|ENER ERİM ÇEKİN": null, "8/B|EREN KIRAY": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/B|DEFNE KALE": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/C|HASAN KAYRA KÖK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/C|ZEHRA ADA YILDIZ": ["Pazartesi", "Perşembe"], "8/C|EGE SAMED GENÇ": ["Çarşamba"], "8/C|EYMEN ÖFKELİ": ["Çarşamba", "Cumartesi", "Pazar"], "8/C|NİLDA ATAY": ["Salı", "Perşembe", "Cumartesi", "Pazar"], "8/C|MASAL ERGÖLEN": ["Pazartesi"], "8/C|EGEHAN ÇONA": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/C|DERİN BÖCEKÇİ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/C|ASIM ARDA ÜNVER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/C|EFE DARCAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe"], "8/C|NİL MELEK ERGÖLEN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/C|ELA AYŞE CEBECİ": ["Pazartesi", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/C|AYBERK ÖZTAŞ": ["Perşembe", "Cumartesi", "Pazar"], "8/C|MAYA DENİZ YILDIZ": ["Salı", "Perşembe", "Cuma"], "8/C|ALPEREN AKSOY": [], "8/C|AGAH OSMAN DOĞRU": ["Salı", "Çarşamba", "Perşembe"], "8/C|YAVUZ RÜZGAR ÇAKIR": null, "8/C|ASYA MİRA YEŞİLYURT": ["Salı", "Perşembe", "Cumartesi", "Pazar"], "8/C|DOĞA GÜNEY YELER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/C|MASAL ÇAKMAK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/C|DEMİR ÖZBAHÇIVANOĞLU": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/C|BEREN ERKAYA": ["Pazartesi", "Salı", "Perşembe", "Cuma"], "8/C|ZEYNEP KIRMIZI": ["Çarşamba", "Perşembe", "Cuma"], "8/D|BERK MENGÜLLÜOĞLU": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/D|UYGAR METE KIRAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|KAYRA EREN SARIER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|ENES TEPEGÖZ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/D|BELİS KERVANKIRAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/D|AZRA KAYA": ["Pazartesi", "Salı", "Çarşamba", "Cumartesi", "Pazar"], "8/D|ZEYNEP KAYA": ["Pazartesi", "Salı", "Çarşamba", "Cumartesi", "Pazar"], "8/D|CİHANGİR CAN DÜZCE": ["Pazartesi", "Cuma", "Cumartesi", "Pazar"], "8/D|TAHA METE ÇİMEN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/D|MEHMET ILGAZ YOLAÇAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|MELİSA AYDIN": ["Salı", "Perşembe", "Cumartesi", "Pazar"], "8/D|SEVDE NAZ ÇİÇEK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|EFE ÖZKAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|EFE DEMİREL": ["Cumartesi", "Pazar"], "8/D|KUZEY KESKİN": ["Salı", "Cumartesi", "Pazar"], "8/D|YAĞIZ YELBAŞI": ["Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|ELİF BAĞCI": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/D|UZAY SARP TURGUT": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|BAHAR KILINÇ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|ALP ARSLAN BALTUK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|DOĞA AKBAYIR": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/D|ASLI AY": ["Çarşamba", "Cumartesi", "Pazar"], "8/D|YAĞMUR KARAGÜN": ["Cumartesi", "Pazar"], "8/E|ELİF KİRAZ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/E|ARAS BULUT KAHVECİ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/E|CEMRE AYDEMİR": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/E|DURU MİNA ERBÖRÜ": ["Salı"], "8/E|KAAN EFE AKSOY": ["Pazartesi", "Çarşamba", "Cuma", "Cumartesi", "Pazar"], "8/E|ÖMER YAVUZ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/E|SARP SERHAT BİNGÜL": ["Perşembe", "Cumartesi", "Pazar"], "8/E|ÜLKÜ ECE BULUT": ["Pazartesi", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/E|NİL CEYLİN YAZAR": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cumartesi", "Pazar"], "8/E|NAZ ELİF YAZAR": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cumartesi", "Pazar"], "8/E|EFLİN DAMLA AYDOĞAN": ["Cumartesi", "Pazar"], "8/E|YUSUF AYDOĞAN": ["Pazartesi", "Salı"], "8/E|TAMER ARAS ÜNAL": ["Pazartesi", "Salı", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/E|İKLİM ERDEM": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/E|ARAS TUNA ÇETİNKAYA": ["Salı", "Çarşamba", "Cumartesi", "Pazar"], "8/E|GÜNCE KÖTEŞ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/E|BARLAS MAZLUM": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/E|İPEK TUNALI": ["Pazartesi", "Salı", "Çarşamba", "Perşembe"], "8/E|KARAHAN SARIKAYA": [], "8/E|ELA DERİN ATIŞERİ": [], "8/E|NİL KEÇELİ": ["Pazartesi", "Salı", "Cumartesi", "Pazar"], "8/E|TOPRAK SEL": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/E|YAĞMUR AVNAMAK": [], "8/F|AYSU UYSAL": ["Salı", "Cuma"], "8/F|IRMAK SAKALLI": ["Salı", "Cumartesi", "Pazar"], "8/F|BERK EREN YENER": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/F|ATAHAN ANBARCI": ["Pazartesi", "Salı", "Cumartesi", "Pazar"], "8/F|ATA ÇINAR BAŞKURT": ["Salı", "Cumartesi", "Pazar"], "8/F|ÇAĞAN ÇETİN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/F|EYMEN KAYRA OCAKÇI": ["Çarşamba"], "8/F|NECATİ ARDA BOZKURT": ["Pazartesi", "Salı", "Çarşamba", "Cuma", "Cumartesi", "Pazar"], "8/F|ÇAĞAN YAMAN": ["Çarşamba"], "8/F|ALİ EMRE HAN": ["Cumartesi", "Pazar"], "8/F|DERİN KÜÇÜK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/F|MURAT EYMEN KAYRAKLI": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/F|ATEŞ GÜDELEK": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/F|MEHMET DOĞRU": ["Cumartesi", "Pazar"], "8/F|ELİF DEFNE BEKTAŞ": ["Salı", "Çarşamba", "Perşembe"], "8/F|BEREN ÖZEN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/F|DAMLA YAŞIT": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/F|ÖYKÜ IŞIL AYDIN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe"], "8/F|KEREM KARAHAN": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma"], "8/F|YAĞIZ CAN": [], "8/F|BUĞLEM DURUSU": ["Cumartesi", "Pazar"], "8/F|ELİF KAHRAMAN": ["Çarşamba"], "8/F|KUZEY ÖZTAŞ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"], "8/F|HACER BEREN KIRAÇ": ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]};
+const MUSAIT_OVERRIDE_KEY = "ATAYURT_MUSAITLIK_YEDEK_V1"; // yalnız yedek sürümde elle yapılan değişiklikler (Excel'den fark)
+function musaitAdKatla(s) { return trKatla(String(s || "")).toLocaleUpperCase("tr-TR").replace(/Ç/g,"C").replace(/Ğ/g,"G").replace(/[Iİ]/g,"I").replace(/Ö/g,"O").replace(/Ş/g,"S").replace(/Ü/g,"U").replace(/[^A-Z ]/g,"").replace(/\s+/g," ").trim(); }
+function musaitSubeKatla(s) { return String(s || "").toLocaleUpperCase("tr-TR").replace(/[^0-9A-ZÇĞİÖŞÜ]/g, ""); }
+function _duzeltmeMesafesi1(a, b) { // ≤1 düzenleme mi
+  if (a === b) return true; const la = a.length, lb = b.length; if (Math.abs(la - lb) > 1) return false;
+  let i = 0, j = 0, f = 0;
+  while (i < la && j < lb) { if (a[i] === b[j]) { i++; j++; continue; } if (++f > 1) return false; if (la > lb) i++; else if (lb > la) j++; else { i++; j++; } }
+  return f + (la - i) + (lb - j) <= 1;
+}
+// Öğrenci (ad + şube) → Excel kaydı. tam: aynı şube + aynı ad; yakın: aynı şube, Türkçe harf katlanmış eşit veya 1 harf farkı (tek aday).
+function musaitEslestir(ogrenciler) {
+  const kayitlar = Object.entries(GOMULU_MUSAITLIK_SUBE).map(([k, v]) => { const [sb, ad] = k.split("|"); return { sb: musaitSubeKatla(sb), ad, katli: musaitAdKatla(ad), kapali: v, sube: sb }; });
+  const sonuc = {};
+  (ogrenciler || []).forEach(s => {
+    const goster = String(s.ogrenci || ""); const temiz = programAdAnahtari(goster.replace(/\s*\([^()]+\)\s*$/, ""));
+    const sb = musaitSubeKatla(s.sube || (goster.match(/\(([^()]+)\)\s*$/) || [])[1]);
+    const ayniSube = kayitlar.filter(k => !sb || k.sb === sb);
+    let e = ayniSube.find(k => k.ad === temiz), tur = "tam";
+    if (!e) { const kt = musaitAdKatla(temiz); const ad = ayniSube.filter(k => k.katli === kt); const ad2 = ad.length ? ad : ayniSube.filter(k => _duzeltmeMesafesi1(k.katli, kt)); if (ad2.length === 1) { e = ad2[0]; tur = "yakın"; } }
+    sonuc[programAdAnahtari(goster)] = e ? { tur, excelAd: e.ad, sube: e.sube, kapali: e.kapali } : { tur: "yok" };
+  });
+  return sonuc;
+}
 // Çip etiketleri: ilk 3 harf Pazartesi/Pazar ve Cuma/Cumartesi'yi aynı gösterir → açık kısaltma.
 const GUN_KISA = { "Pazartesi": "Pzt", "Salı": "Sal", "Çarşamba": "Çar", "Perşembe": "Per", "Cuma": "Cum", "Cumartesi": "Cmt", "Pazar": "Paz" };
 function programAdAnahtari(ad) { return String(ad || "").trim().replace(/\s+/g, " ").toLocaleUpperCase("tr-TR"); }
@@ -1924,22 +1939,15 @@ function EtutSistemi() {
   const [aralikHata, setAralikHata] = useState({});
   // Öğrenci müsaitliği (1509-musait): { [programAdAnahtari(ad)]: [gelemediği gün adları] } — kayıt yoksa her gün müsait.
   // konuGruplari gibi localStorage'da; F5'te kaybolmaz.
-  const [ogrMusait, _setOgrMusait] = useState(() => {
+  const [ogrMusaitFark, _setOgrMusaitFark] = useState(() => {
     try {
-      const parsed = JSON.parse(window.localStorage.getItem(PROGRAM_MUSAIT_STORAGE_KEY) || "null");
+      const parsed = JSON.parse(window.localStorage.getItem(MUSAIT_OVERRIDE_KEY) || "null");
       if (!parsed || typeof parsed !== "object") return {};
       const clean = {};
-      Object.entries(parsed).forEach(([k, v]) => {
-        const gunler = Array.isArray(v) ? v.filter(g => GUNLER.includes(g)) : [];
-        if (gunler.length) clean[k] = gunler;
-      });
+      Object.entries(parsed).forEach(([k, v]) => { if (Array.isArray(v)) clean[k] = v.filter(g => GUNLER.includes(g)); });
       return clean;
     } catch (e) { return {}; }
   });
-  const setOgrMusait = (next) => {
-    _setOgrMusait(next);
-    try { window.localStorage.setItem(PROGRAM_MUSAIT_STORAGE_KEY, JSON.stringify(next)); } catch (e) {}
-  };
   // Konu birleştirme: { "ÜSTKONU_KEY": { ders, label, konular: ["KONU1","KONU2"] } }
   // @@KG-TEMIZ (1509-kg-temiz): birleştirmeler haftanın sınavına aittir; öğrenci/hafta verisi uçucu olduğu için
   // gruplar da KALICI DEĞİL. Açılışta eski sürümlerin bıraktığı yetim "ATAYURT_KONU_GRUPLARI" kaydı silinir,
@@ -2006,6 +2014,17 @@ function EtutSistemi() {
   }
 
   const studs = weeks[activeWeek]?.students || [];
+  // 2710e: etkin müsaitlik = Excel (şube+ad eşleşmesi) + yedekte elle yapılan farklar.
+  const musaitEslesme = useMemo(() => musaitEslestir(studs), [studs]);
+  const musaitTaban = useMemo(() => { const m = {}; Object.entries(musaitEslesme).forEach(([k, e]) => { if (e.kapali && e.kapali.length) m[k] = e.kapali; }); return m; }, [musaitEslesme]);
+  const ogrMusait = useMemo(() => { const m = {...musaitTaban}; Object.entries(ogrMusaitFark).forEach(([k, v]) => { if (v.length) m[k] = v; else delete m[k]; }); return m; }, [musaitTaban, ogrMusaitFark]);
+  const setOgrMusait = (next) => {
+    const fark = {}; const esit = (a, b) => (a || []).join() === (b || []).join();
+    new Set([...Object.keys(musaitTaban), ...Object.keys(next), ...Object.keys(ogrMusaitFark)]).forEach(k => { if (!esit(next[k], musaitTaban[k])) fark[k] = next[k] || []; });
+    _setOgrMusaitFark(fark);
+    try { window.localStorage.setItem(MUSAIT_OVERRIDE_KEY, JSON.stringify(fark)); } catch (e) {}
+  };
+  useEffect(() => { const y = Object.entries(musaitEslesme).filter(([, e]) => e.tur === "yakın"); if (y.length) console.info("[müsaitlik] yakın eşleşme:", y.map(([k, e]) => k + " → " + e.excelAd + " (" + e.sube + ")").join("; ")); }, [musaitEslesme]);
   const students = studs;
   const weekLabel = weeks[activeWeek]?.label || "";
   // @@PROGRAM-KAYIT: otomatik kayıt + geri yükleme şeridi
@@ -2207,7 +2226,7 @@ function EtutSistemi() {
         programOturumlar.map(o => gecerli.has(o.grupKey) ? o : { ...o, ogrenciler: [] }), ogrMusait));
     }
   };
-  window.__etutDurum = { aralikAyar, aralikAyarla, grupAdaylari, groups, takvim, threshold, weekLabel, students: studs, konuGruplari, programGunler, programOturumlar, ogrMusait, zayifKonular: (s) => buildStudentWeakTopics(s, threshold, konuGruplari), konuGruplariAyarla: (g) => setKonuGruplari(g), weekInput, haftaEtiketleri, yeniHaftaEtiketi, sonrakiHaftaEtiketi, weeks }; // test kancası
+  window.__etutDurum = { aralikAyar, aralikAyarla, grupAdaylari, groups, takvim, threshold, weekLabel, students: studs, konuGruplari, programGunler, programOturumlar, ogrMusait, musaitEslesme, zayifKonular: (s) => buildStudentWeakTopics(s, threshold, konuGruplari), konuGruplariAyarla: (g) => setKonuGruplari(g), weekInput, haftaEtiketleri, yeniHaftaEtiketi, sonrakiHaftaEtiketi, weeks }; // test kancası
   const buildGroups = (s,t) => buildGroupsNow(s||studs, t||threshold, konuGruplari);
 
   // Öğrenci kartı/tablosu: eşik altındaki TÜM konular (birleştirme dahil).
@@ -2512,6 +2531,11 @@ function EtutSistemi() {
           );
         })}
         {kapali.length>0 && <span style={{fontSize:9,color:"#94a3b8",marginLeft:2}}>{7-kapali.length}/7 gün</span>}
+        {(()=>{ const e=musaitEslesme[programAdAnahtari(ad)]; if(!e) return null;
+          if(e.tur==="yakın") return <span data-musait-eslesme="yakın" title={"Excel: "+e.excelAd+" ("+e.sube+")"} style={{fontSize:9,color:"#fbbf24",marginLeft:2}}>yakın eşleşme: {e.excelAd}</span>;
+          if(e.tur==="yok") return <span data-musait-eslesme="yok" style={{fontSize:9,color:"#f87171",marginLeft:2}}>Excel'de yok</span>;
+          if(e.kapali===null) return <span data-musait-eslesme="bos" style={{fontSize:9,color:"#fbbf24",marginLeft:2}}>Excel'de gün girilmemiş</span>;
+          return null; })()}
       </div>
     );
   };
@@ -3712,6 +3736,16 @@ function EtutSistemi() {
         )}
 
         {/* ── TAB: PROGRAM (v15 Haftalık Etüt Programı — 1409b geri getirildi; kural @@PROGRAM-KURALI) ── */}
+        {(activeTab==="program"||activeTab==="ogrenciler")&&studs.length>0&&(()=>{
+          const e=Object.entries(musaitEslesme); const yok=e.filter(([,v])=>v.tur==="yok"); const bos=e.filter(([,v])=>v.tur!=="yok"&&v.kapali===null); const yakin=e.filter(([,v])=>v.tur==="yakın");
+          if(!yok.length&&!bos.length&&!yakin.length) return null;
+          return(<div data-musait-uyari style={{margin:"0 0 12px",padding:"8px 12px",borderRadius:10,background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.4)",fontSize:12,color:"#fcd34d",lineHeight:1.6}}>
+            <b>⚠ Müsaitlik (Excel) uyarıları</b> — {e.length-yok.length}/{e.length} öğrenci Excel'le eşleşti.
+            {bos.length>0&&<div data-musait-bos>Excel'de gün girilmemiş ({bos.length}): <b>{bos.map(([k])=>k).join(", ")}</b> → gün uydurulmadı; eskisi gibi <b>her gün müsait</b> sayılıyor. Gerekirse öğrenci kartından günleri kapatın.</div>}
+            {yakin.length>0&&<div data-musait-yakin>Yakın eşleşme ({yakin.length}): {yakin.map(([k,v])=>`${k} ↔ ${v.excelAd} (${v.sube})`).join("; ")}</div>}
+            {yok.length>0&&<div data-musait-eslesmedi style={{color:"#f87171"}}>Excel'de bulunamadı ({yok.length}): {yok.map(([k])=>k).join(", ")} → her gün müsait sayılıyor.</div>}
+          </div>);
+        })()}
         {activeTab==="program"&&(()=>{
           const yeniId = () => Math.random().toString(36).slice(2,10);
           const buHafta = (adlar) => {
